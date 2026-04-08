@@ -1,0 +1,155 @@
+#include "cpu_impl.hpp"
+#include "bus.hpp"
+
+// ============================================================================
+// Helper: handle delay slot for class 0 branches
+// state.pc is already insn+2 (pre-advanced by step()).
+// ============================================================================
+
+static void do_c0_jump(Cpu& cpu, uint32_t target, bool delayed) {
+    if (!delayed) {
+        cpu.state.pc = target;
+    } else {
+        cpu.state.in_delay_slot = true;
+        cpu.state.delay_target  = target;
+    }
+}
+
+// ============================================================================
+// Handlers — Class 0a: control flow
+// ============================================================================
+
+void Cpu::h_nop(Cpu& cpu, uint16_t) { cpu.flush_ext(); }
+
+void Cpu::h_slp(Cpu& cpu, uint16_t) {
+    cpu.flush_ext();
+    cpu.state.in_halt = true;
+}
+
+void Cpu::h_halt(Cpu& cpu, uint16_t) {
+    cpu.flush_ext();
+    cpu.state.in_halt = true;
+}
+
+void Cpu::h_pushn(Cpu& cpu, uint16_t insn) {
+    cpu.flush_ext();
+    int rs_n = insn & 0xF;
+    for (int i = rs_n; i >= 0; i--) {
+        cpu.state.sp -= 4;
+        cpu.bus_.write32(cpu.state.sp, cpu.state.r[i]);
+    }
+}
+
+void Cpu::h_popn(Cpu& cpu, uint16_t insn) {
+    cpu.flush_ext();
+    int rd_n = insn & 0xF;
+    for (int i = 0; i <= rd_n; i++) {
+        cpu.state.r[i] = cpu.bus_.read32(cpu.state.sp);
+        cpu.state.sp += 4;
+    }
+}
+
+void Cpu::h_brk(Cpu& cpu, uint16_t) {
+    cpu.flush_ext();
+    cpu.do_trap(0, 0);
+}
+
+void Cpu::h_retd(Cpu& cpu, uint16_t) {
+    // ret.d: delayed return — pops PSR and PC, executes delay slot, then jumps
+    cpu.flush_ext();
+    uint32_t ret_addr = cpu.bus_.read32(cpu.state.sp); cpu.state.sp += 4;
+    cpu.state.psr.raw = cpu.bus_.read32(cpu.state.sp); cpu.state.sp += 4;
+    cpu.state.in_delay_slot = true;
+    cpu.state.delay_target  = ret_addr;
+}
+
+void Cpu::h_int(Cpu& cpu, uint16_t insn) {
+    cpu.flush_ext();
+    int vec = insn & 3;
+    cpu.do_trap(vec, 0);
+}
+
+void Cpu::h_reti(Cpu& cpu, uint16_t) {
+    cpu.flush_ext();
+    cpu.state.psr.raw = cpu.bus_.read32(cpu.state.sp); cpu.state.sp += 4;
+    uint32_t ret_addr = cpu.bus_.read32(cpu.state.sp); cpu.state.sp += 4;
+    cpu.state.pc = ret_addr;
+}
+
+void Cpu::h_call_rb(Cpu& cpu, uint16_t insn) {
+    cpu.flush_ext();
+    int rb_n = insn & 0xF;
+    bool delayed = (insn >> 8) & 1;
+    uint32_t target = cpu.state.r[rb_n];
+    uint32_t ret_addr = cpu.state.pc + (delayed ? 2 : 0);
+    cpu.state.sp -= 4;
+    cpu.bus_.write32(cpu.state.sp, ret_addr);
+    do_c0_jump(cpu, target, delayed);
+}
+
+void Cpu::h_ret(Cpu& cpu, uint16_t insn) {
+    cpu.flush_ext();
+    bool delayed = (insn >> 8) & 1;
+    uint32_t target = cpu.bus_.read32(cpu.state.sp); cpu.state.sp += 4;
+    do_c0_jump(cpu, target, delayed);
+}
+
+void Cpu::h_jp_rb(Cpu& cpu, uint16_t insn) {
+    cpu.flush_ext();
+    int rb_n = insn & 0xF;
+    bool delayed = (insn >> 8) & 1;
+    uint32_t target = cpu.state.r[rb_n];
+    do_c0_jump(cpu, target, delayed);
+}
+
+// ============================================================================
+// Handlers — Class 0b: conditional branches
+// ============================================================================
+
+// PC-relative branch: target = insn_addr + 2 * disp
+// insn_addr is (state.pc - 2) because step() pre-advances PC.
+void Cpu::h_jr(Cpu& cpu, uint16_t insn, bool taken) {
+    int32_t disp = cpu.ext_pcrel(insn & 0xFF);
+    bool delayed = (insn >> 8) & 1;
+    cpu.flush_ext();
+    if (taken) {
+        uint32_t insn_addr = cpu.state.pc - 2;
+        uint32_t target = static_cast<uint32_t>(static_cast<int32_t>(insn_addr) + 2 * disp);
+        do_c0_jump(cpu, target, delayed);
+    }
+    // Not taken: PC already at insn_addr+2 (pre-advanced by step()).
+    // The delay slot (if d=1) executes naturally as the next instruction,
+    // leaving PC at insn_addr+4 — correct for a not-taken delayed branch.
+}
+
+void Cpu::h_jrgt (Cpu& cpu, uint16_t i) { h_jr(cpu, i, !(cpu.state.psr.n()^cpu.state.psr.v()) && !cpu.state.psr.z()); }
+void Cpu::h_jrge (Cpu& cpu, uint16_t i) { h_jr(cpu, i, !(cpu.state.psr.n()^cpu.state.psr.v())); }
+void Cpu::h_jrlt (Cpu& cpu, uint16_t i) { h_jr(cpu, i,  (cpu.state.psr.n()^cpu.state.psr.v())); }
+void Cpu::h_jrle (Cpu& cpu, uint16_t i) { h_jr(cpu, i,  (cpu.state.psr.n()^cpu.state.psr.v()) || cpu.state.psr.z()); }
+void Cpu::h_jrugt(Cpu& cpu, uint16_t i) { h_jr(cpu, i, !cpu.state.psr.c() && !cpu.state.psr.z()); }
+void Cpu::h_jruge(Cpu& cpu, uint16_t i) { h_jr(cpu, i, !cpu.state.psr.c()); }
+void Cpu::h_jrult(Cpu& cpu, uint16_t i) { h_jr(cpu, i,  cpu.state.psr.c()); }
+void Cpu::h_jrule(Cpu& cpu, uint16_t i) { h_jr(cpu, i,  cpu.state.psr.c() || cpu.state.psr.z()); }
+void Cpu::h_jreq (Cpu& cpu, uint16_t i) { h_jr(cpu, i,  cpu.state.psr.z()); }
+void Cpu::h_jrne (Cpu& cpu, uint16_t i) { h_jr(cpu, i, !cpu.state.psr.z()); }
+
+void Cpu::h_call_simm8(Cpu& cpu, uint16_t insn) {
+    int32_t disp = cpu.ext_pcrel(insn & 0xFF);
+    cpu.flush_ext();
+    uint32_t insn_addr = cpu.state.pc - 2;
+    uint32_t target = static_cast<uint32_t>(static_cast<int32_t>(insn_addr) + 2 * disp);
+    bool delayed = (insn >> 8) & 1;
+    uint32_t ret_addr = cpu.state.pc + (delayed ? 2 : 0);
+    cpu.state.sp -= 4;
+    cpu.bus_.write32(cpu.state.sp, ret_addr);
+    do_c0_jump(cpu, target, delayed);
+}
+
+void Cpu::h_jp_simm8(Cpu& cpu, uint16_t insn) {
+    int32_t disp = cpu.ext_pcrel(insn & 0xFF);
+    cpu.flush_ext();
+    uint32_t insn_addr = cpu.state.pc - 2;
+    bool delayed = (insn >> 8) & 1;
+    uint32_t target = static_cast<uint32_t>(static_cast<int32_t>(insn_addr) + 2 * disp);
+    do_c0_jump(cpu, target, delayed);
+}

@@ -1,0 +1,90 @@
+cmake_minimum_required(VERSION 3.20)
+project(piece_emu CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+add_compile_options(-Wall -Wextra -Wpedantic)
+
+# ---------------------------------------------------------------------------
+# Google Test — use system source tree (Debian: /usr/src/googletest)
+# ---------------------------------------------------------------------------
+if(EXISTS /usr/src/googletest/CMakeLists.txt)
+    set(GTEST_SOURCE_DIR /usr/src/googletest)
+    # Suppress GTest's own warnings under -Wpedantic / -Wextra
+    add_subdirectory(${GTEST_SOURCE_DIR} ${CMAKE_BINARY_DIR}/googletest EXCLUDE_FROM_ALL)
+    set(GTEST_FOUND TRUE)
+else()
+    find_package(GTest QUIET)
+    if(GTest_FOUND)
+        set(GTEST_FOUND TRUE)
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# libpiece_core — shared emulation core (no external dependencies)
+# ---------------------------------------------------------------------------
+add_library(piece_core STATIC
+    cpu_core.cpp
+    cpu_class0.cpp
+    cpu_class1.cpp
+    cpu_class2.cpp
+    cpu_class3.cpp
+    cpu_class4.cpp
+    cpu_class5.cpp
+    cpu_class6.cpp
+    cpu_dispatch.cpp
+    cpu_disasm.cpp
+    bus.cpp
+    elf_loader.cpp
+    semihosting.cpp
+    gdb_rsp.cpp
+)
+
+target_include_directories(piece_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+# ---------------------------------------------------------------------------
+# piece-emu — bare-metal / headless CLI frontend (POSIX only, no SDL)
+# ---------------------------------------------------------------------------
+add_executable(piece-emu
+    main.cpp
+)
+
+target_link_libraries(piece-emu PRIVATE piece_core)
+
+# ---------------------------------------------------------------------------
+# 第1層・第2層: C++ unit tests (Google Test)
+# ---------------------------------------------------------------------------
+if(GTEST_FOUND)
+    enable_testing()
+
+    add_executable(piece_unit_tests
+        tests/unit/test_ext_imm.cpp
+        tests/unit/test_psr_flags.cpp
+        tests/unit/test_shift_decode.cpp
+        tests/unit/test_disasm.cpp
+        tests/unit/test_bcu.cpp
+        tests/unit/test_cpu_instructions.cpp
+    )
+
+    target_link_libraries(piece_unit_tests PRIVATE piece_core GTest::gtest_main)
+    target_include_directories(piece_unit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    include(GoogleTest)
+    gtest_discover_tests(piece_unit_tests)
+else()
+    message(WARNING "Google Test not found — skipping unit tests (piece_unit_tests)")
+endif()
+
+# ---------------------------------------------------------------------------
+# piece-emu-system — full-system / game frontend (future; requires SDL/imgui)
+# ---------------------------------------------------------------------------
+# add_executable(piece-emu-system
+#     system_main.cpp
+#     frontend/lcd.cpp
+#     frontend/sound.cpp
+#     frontend/input.cpp
+# )
+# find_package(SDL2 REQUIRED)
+# target_link_libraries(piece-emu-system PRIVATE piece_core SDL2::SDL2)
