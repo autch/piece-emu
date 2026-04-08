@@ -8,19 +8,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_compile_options(-Wall -Wextra -Wpedantic)
 
 # ---------------------------------------------------------------------------
-# Google Test — use system source tree (Debian: /usr/src/googletest)
+# Dependencies via vcpkg (toolchain injected by -DCMAKE_TOOLCHAIN_FILE=...)
 # ---------------------------------------------------------------------------
-if(EXISTS /usr/src/googletest/CMakeLists.txt)
-    set(GTEST_SOURCE_DIR /usr/src/googletest)
-    # Suppress GTest's own warnings under -Wpedantic / -Wextra
-    add_subdirectory(${GTEST_SOURCE_DIR} ${CMAKE_BINARY_DIR}/googletest EXCLUDE_FROM_ALL)
-    set(GTEST_FOUND TRUE)
-else()
-    find_package(GTest QUIET)
-    if(GTest_FOUND)
-        set(GTEST_FOUND TRUE)
-    endif()
-endif()
+find_package(GTest QUIET)
 
 # ---------------------------------------------------------------------------
 # libpiece_core — shared emulation core (no external dependencies)
@@ -54,9 +44,9 @@ add_executable(piece-emu
 target_link_libraries(piece-emu PRIVATE piece_core)
 
 # ---------------------------------------------------------------------------
-# 第1層・第2層: C++ unit tests (Google Test)
+# 第1層・第2層: C++ unit tests (Google Test via vcpkg)
 # ---------------------------------------------------------------------------
-if(GTEST_FOUND)
+if(GTest_FOUND)
     enable_testing()
 
     add_executable(piece_unit_tests
@@ -74,17 +64,25 @@ if(GTEST_FOUND)
     include(GoogleTest)
     gtest_discover_tests(piece_unit_tests)
 else()
-    message(WARNING "Google Test not found — skipping unit tests (piece_unit_tests)")
+    message(WARNING "Google Test not found — skipping unit tests (piece_unit_tests). "
+                    "Run cmake with -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake")
 endif()
 
 # ---------------------------------------------------------------------------
-# piece-emu-system — full-system / game frontend (future; requires SDL/imgui)
+# piece-emu-system — full-system / game frontend (future; requires SDL2 + imgui)
+# To enable: cmake with -DVCPKG_MANIFEST_FEATURES=system and uncomment below.
 # ---------------------------------------------------------------------------
+# find_package(SDL2 CONFIG REQUIRED)
+# find_package(imgui CONFIG REQUIRED)
+#
 # add_executable(piece-emu-system
 #     system_main.cpp
 #     frontend/lcd.cpp
 #     frontend/sound.cpp
 #     frontend/input.cpp
 # )
-# find_package(SDL2 REQUIRED)
-# target_link_libraries(piece-emu-system PRIVATE piece_core SDL2::SDL2)
+# target_link_libraries(piece-emu-system PRIVATE
+#     piece_core
+#     SDL2::SDL2
+#     imgui::imgui
+# )

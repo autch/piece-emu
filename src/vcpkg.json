@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "piece-emu",
+  "version": "0.1.0",
+  "dependencies": [
+    "gtest"
+  ],
+  "features": {
+    "system": {
+      "description": "Full-system frontend with display and audio (requires SDL2 and Dear ImGui)",
+      "dependencies": [
+        "sdl2",
+        {
+          "name": "imgui",
+          "features": ["sdl2-binding", "sdl2-renderer-binding"]
+        }
+      ]
+    }
+  }
+}

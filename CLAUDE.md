@@ -95,12 +95,20 @@ Memory map:
 
 ### New Emulator (`src/`)
 
-**Implemented.** C++20 / CMake+Ninja, in `src/`. Build and run:
+**Implemented.** C++20 / CMake+Ninja, in `src/`. Dependencies managed via vcpkg (`src/vcpkg.json`).
+
+Build and run:
 ```bash
-cd build-src && cmake ../src -G Ninja && ninja   # build
+# First build (vcpkg installs gtest automatically):
+cmake -S src -B build-src -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE=/home/autch/src/vcpkg/scripts/buildsystems/vcpkg.cmake
+ninja -C build-src
+
 ./build-src/piece-emu --trace <elf>              # run with disassembly trace
 ./build-src/piece-emu --gdb [port] <elf>         # GDB RSP mode (default port 1234)
 ./build-src/piece-emu --max-cycles N <elf>       # limit execution
+
+ninja -C build-src test                          # run all unit tests (layers 1+2)
 ```
 
 Build artifacts:
@@ -127,9 +135,9 @@ Pattern: `crt0.s` sets SP via `ext 0x80` / `ld.w %r0, 0` / `ld.w %sp, %r0`, then
 
 ## Language Rules
 
-- Code and comments in `llvm/`, `newlib/`, `tools/`, `mame/`, `piemu/`: **English only**.
-- `docs/` and `sdk/`: Japanese allowed (reference documents).
-- Do not modify any files under `sdk/` — reference material only.
+- Code, comments in top-level, `src/` and commit messages: **English only**.
+- `docs/`: Japanese allowed (reference documents).
+- Do not modify any files under `piece-toolchain-llvm/`, `mame/`, `piemu/` — reference material only.
 
 ## S1C33000 CPU Critical Facts
 
