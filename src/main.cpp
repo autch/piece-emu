@@ -16,6 +16,7 @@ static void usage(const char* argv0) {
         "Usage: %s [options] <elf-file>\n"
         "Options:\n"
         "  --gdb [port]     Wait for GDB connection on port (default 1234) before running\n"
+        "  --debug-rsp      Log RSP packets to stderr (requires --gdb)\n"
         "  --max-cycles N   Stop after N cycles (default: unlimited)\n"
         "  --trace          Print disassembly for each instruction\n"
         "\n"
@@ -29,6 +30,7 @@ int main(int argc, char** argv) {
 
     bool     use_gdb    = false;
     uint16_t gdb_port   = 1234;
+    bool     debug_rsp  = false;
     uint64_t max_cycles = 0; // 0 = unlimited
     bool     trace      = false;
     std::string elf_path;
@@ -39,6 +41,8 @@ int main(int argc, char** argv) {
             use_gdb = true;
             if (i + 1 < argc && argv[i+1][0] != '-')
                 gdb_port = static_cast<uint16_t>(std::atoi(argv[++i]));
+        } else if (arg == "--debug-rsp") {
+            debug_rsp = true;
         } else if (arg == "--max-cycles" && i + 1 < argc) {
             max_cycles = std::strtoull(argv[++i], nullptr, 10);
         } else if (arg == "--trace") {
@@ -72,7 +76,7 @@ int main(int argc, char** argv) {
 
         // GDB mode: wait for connection, then serve
         if (use_gdb) {
-            GdbRsp gdb(bus, cpu, gdb_port);
+            GdbRsp gdb(bus, cpu, gdb_port, debug_rsp);
             gdb.serve();
             return semihosting_test_result() != 0 ? 1 : 0;
         }
