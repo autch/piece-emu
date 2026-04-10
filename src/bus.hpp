@@ -36,15 +36,29 @@ struct IoHandler {
 
 class Bus {
 public:
-    // RAM and ROM buffers
-    static constexpr uint32_t IRAM_BASE  = 0x000000;
-    static constexpr uint32_t IRAM_SIZE  = 0x002000; // 8 KB
-    static constexpr uint32_t SRAM_BASE  = 0x100000;
-    static constexpr uint32_t SRAM_SIZE  = 0x040000; // 256 KB
-    static constexpr uint32_t FLASH_BASE = 0xC00000;
-    static constexpr uint32_t FLASH_MAX  = 0x200000; // up to 2 MB
-    static constexpr uint32_t IOREG_BASE = 0x030000;
-    static constexpr uint32_t IOREG_SIZE = 0x050000; // covers 0x030000–0x07FFFF (peripherals + semihosting)
+    // Fixed hardware addresses (S1C33209 internal / memory-map constants)
+    static constexpr uint32_t IRAM_BASE   = 0x000000;
+    static constexpr uint32_t IRAM_SIZE   = 0x002000; // 8 KB (internal, fixed)
+    static constexpr uint32_t SRAM_BASE   = 0x100000; // external SRAM start
+    static constexpr uint32_t SRAM_WINDOW = 0x100000; // BCU-decoded window: 1 MB (0x100000–0x1FFFFF)
+    static constexpr uint32_t FLASH_BASE    = 0xC00000; // external Flash start
+    // Area 1: 0x030000–0x05FFFF.  I/O registers live at 0x040000–0x04FFFF;
+    // 0x030000–0x03FFFF and 0x050000–0x05FFFF are mirrors of that window.
+    // io_handlers_ is indexed relative to IOREG_BASE after mirror normalization.
+    static constexpr uint32_t AREA1_BASE    = 0x030000; // Area 1 start (includes mirrors)
+    static constexpr uint32_t AREA1_END     = 0x060000; // Area 1 end (exclusive)
+    static constexpr uint32_t IOREG_BASE    = 0x040000; // canonical I/O base
+    static constexpr uint32_t IOREG_SIZE    = 0x010000; // 64 KB actual I/O window
+    // Semihosting sits above Area 1 and is not subject to mirroring.
+    static constexpr uint32_t SEMIHOST_BASE = 0x060000;
+    static constexpr uint32_t SEMIHOST_SIZE = 0x020000; // 0x060000–0x07FFFF
+    // Total io_handlers_ span: IOREG_BASE to end of semihosting (0x040000–0x07FFFF)
+    static constexpr uint32_t IOHANDLER_SPAN = (SEMIHOST_BASE + SEMIHOST_SIZE) - IOREG_BASE;
+
+    // External memory sizes — set by constructor; vary by hardware revision.
+    // Standard P/ECE: sram=256 KB, flash=1 MB.  2 MB Flash mod also exists.
+    std::size_t sram_size()  const { return sram_.size(); }
+    std::size_t flash_size() const { return flash_.size(); }
 
     // External area wait cycles (default: 3 for SRAM, 3 for Flash)
     int sram_wait  = 3;
@@ -61,7 +75,11 @@ public:
     // the last call.  Cpu::step() polls this after each dispatch to halt the CPU.
     bool take_fault() { bool f = fault_pending_; fault_pending_ = false; return f; }
 
-    explicit Bus(std::size_t flash_size = 0x80000 /* 512 KB default */);
+    // sram_size:  external SRAM in bytes (default 256 KB — standard P/ECE)
+    // flash_size: external Flash in bytes (default 512 KB — standard P/ECE;
+    //             use 0x100000 for 1 MB or 0x200000 for 2 MB Flash-modded units)
+    explicit Bus(std::size_t sram_size  = 0x040000,
+                 std::size_t flash_size = 0x080000);
 
     // Load data into flash ROM
     void load_flash(uint32_t offset, const uint8_t* data, std::size_t size);

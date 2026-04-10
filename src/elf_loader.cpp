@@ -117,10 +117,10 @@ uint32_t elf_load(Bus& bus, const std::string& path) {
         // Determine destination region and load
         const uint8_t* src = data.data() + p_offset;
 
-        if (p_paddr >= Bus::FLASH_BASE && p_paddr < Bus::FLASH_BASE + Bus::FLASH_MAX) {
+        if (p_paddr >= Bus::FLASH_BASE && p_paddr < Bus::FLASH_BASE + bus.flash_size()) {
             if (p_filesz > 0)
                 bus.load_flash(p_paddr - Bus::FLASH_BASE, src, p_filesz);
-        } else if (p_paddr >= Bus::SRAM_BASE && p_paddr < Bus::SRAM_BASE + Bus::SRAM_SIZE) {
+        } else if (p_paddr >= Bus::SRAM_BASE && p_paddr < Bus::SRAM_BASE + bus.sram_size()) {
             if (p_filesz > 0)
                 bus.load_sram(p_paddr - Bus::SRAM_BASE, src, p_filesz);
         } else if (p_paddr < Bus::IRAM_SIZE) {

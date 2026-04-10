@@ -16,10 +16,13 @@ static void usage(const char* argv0) {
     std::fprintf(stderr,
         "Usage: %s [options] <elf-file>\n"
         "Options:\n"
-        "  --gdb [port]     Wait for GDB connection on port (default 1234) before running\n"
-        "  --debug-rsp      Log RSP packets to stderr (requires --gdb)\n"
-        "  --max-cycles N   Stop after N cycles (default: unlimited)\n"
-        "  --trace          Print disassembly for each instruction\n"
+        "  --gdb [port]       Wait for GDB connection on port (default 1234) before running\n"
+        "  --debug-rsp        Log RSP packets to stderr (requires --gdb)\n"
+        "  --max-cycles N     Stop after N cycles (default: unlimited)\n"
+        "  --trace            Print disassembly for each instruction\n"
+        "  --sram-size N      External SRAM size in bytes (default 262144 = 256 KB)\n"
+        "  --flash-size N     External Flash size in bytes (default 524288 = 512 KB;\n"
+        "                       use 1048576 for 1 MB or 2097152 for 2 MB Flash-modded P/ECE)\n"
         "\n"
         "The ELF entry point overrides the boot vector unless the binary is a full\n"
         "firmware image (linked for Flash at 0x0C00000).\n",
@@ -29,11 +32,13 @@ static void usage(const char* argv0) {
 int main(int argc, char** argv) {
     if (argc < 2) { usage(argv[0]); return 1; }
 
-    bool     use_gdb    = false;
-    uint16_t gdb_port   = 1234;
-    bool     debug_rsp  = false;
-    uint64_t max_cycles = 0; // 0 = unlimited
-    bool     trace      = false;
+    bool        use_gdb     = false;
+    uint16_t    gdb_port    = 1234;
+    bool        debug_rsp   = false;
+    uint64_t    max_cycles  = 0; // 0 = unlimited
+    bool        trace       = false;
+    std::size_t sram_size   = 0x040000; // 256 KB default
+    std::size_t flash_size  = 0x080000; // 512 KB default (standard P/ECE)
     std::string elf_path;
 
     for (int i = 1; i < argc; i++) {
@@ -46,6 +51,10 @@ int main(int argc, char** argv) {
             debug_rsp = true;
         } else if (arg == "--max-cycles" && i + 1 < argc) {
             max_cycles = std::strtoull(argv[++i], nullptr, 10);
+        } else if (arg == "--sram-size" && i + 1 < argc) {
+            sram_size = static_cast<std::size_t>(std::strtoull(argv[++i], nullptr, 0));
+        } else if (arg == "--flash-size" && i + 1 < argc) {
+            flash_size = static_cast<std::size_t>(std::strtoull(argv[++i], nullptr, 0));
         } else if (arg == "--trace") {
             trace = true;
         } else if (arg.rfind("--", 0) == 0) {
@@ -59,8 +68,7 @@ int main(int argc, char** argv) {
     if (elf_path.empty()) { usage(argv[0]); return 1; }
 
     try {
-        // Create the bus (512 KB Flash default)
-        Bus bus(0x80000);
+        Bus bus(sram_size, flash_size);
 
         // Create the CPU
         Cpu cpu(bus);
