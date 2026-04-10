@@ -3,7 +3,8 @@
   "name": "piece-emu",
   "version": "0.1.0",
   "dependencies": [
-    "gtest"
+    "gtest",
+    "cli11"
   ],
   "features": {
     "system": {

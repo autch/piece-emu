@@ -14,6 +14,17 @@ static uint32_t le32(const uint8_t* p) {
 static void put_le16(uint8_t* p, uint16_t v) { p[0]=v; p[1]=v>>8; }
 static void put_le32(uint8_t* p, uint32_t v) { p[0]=v; p[1]=v>>8; p[2]=v>>16; p[3]=v>>24; }
 
+// ---- IO address helpers -----------------------------------------------------
+
+// Normalize an Area 1 address (0x030000–0x05FFFF) to the canonical I/O window
+// (0x040000–0x04FFFF).  Addresses already in the canonical window are unchanged.
+// Semihosting addresses (0x060000+) are passed through unchanged.
+static uint32_t normalize_io(uint32_t addr) {
+    if (addr < Bus::SEMIHOST_BASE)
+        return Bus::IOREG_BASE | (addr & (Bus::IOREG_SIZE - 1));
+    return addr;
+}
+
 // ---- Bus --------------------------------------------------------------------
 
 Bus::Bus(std::size_t sram_size, std::size_t flash_size)
@@ -45,15 +56,6 @@ void Bus::register_io(uint32_t addr, IoHandler handler) {
             "invalid IO register address 0x{:06X} (must be even, in 0x{:06X}–0x{:06X})",
             addr, IOREG_BASE, IOREG_BASE + IOHANDLER_SPAN - 2));
     io_handlers_[(addr - IOREG_BASE) / 2] = std::move(handler);
-}
-
-// Normalize an Area 1 address (0x030000–0x05FFFF) to the canonical I/O window
-// (0x040000–0x04FFFF).  Addresses already in the canonical window are unchanged.
-// Semihosting addresses (0x060000+) are passed through unchanged.
-static uint32_t normalize_io(uint32_t addr) {
-    if (addr < Bus::SEMIHOST_BASE)
-        return Bus::IOREG_BASE | (addr & (Bus::IOREG_SIZE - 1));
-    return addr;
 }
 
 Bus::Region Bus::classify(uint32_t addr) const {

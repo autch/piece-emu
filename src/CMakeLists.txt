@@ -11,6 +11,7 @@ add_compile_options(-Wall -Wextra -Wpedantic)
 # Dependencies via vcpkg (toolchain injected by -DCMAKE_TOOLCHAIN_FILE=...)
 # ---------------------------------------------------------------------------
 find_package(GTest QUIET)
+find_package(CLI11 CONFIG REQUIRED)
 
 # ---------------------------------------------------------------------------
 # libpiece_core — shared emulation core (no external dependencies)
@@ -42,7 +43,7 @@ add_executable(piece-emu
     main.cpp
 )
 
-target_link_libraries(piece-emu PRIVATE piece_core)
+target_link_libraries(piece-emu PRIVATE piece_core CLI11::CLI11)
 
 # ---------------------------------------------------------------------------
 # 第1層・第2層: C++ unit tests (Google Test via vcpkg)

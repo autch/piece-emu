@@ -5,105 +5,78 @@
 #include "gdb_rsp.hpp"
 #include "semihosting.hpp"
 
+#include <CLI/CLI.hpp>
 #include <cstdio>
-#include <cstdlib>
-#include <cstring>
 #include <stdexcept>
 #include <string>
-#include <time.h>
-
-static void usage(const char* argv0) {
-    std::fprintf(stderr,
-        "Usage: %s [options] <elf-file>\n"
-        "Options:\n"
-        "  --gdb [port]       Wait for GDB connection on port (default 1234) before running\n"
-        "  --debug-rsp        Log RSP packets to stderr (requires --gdb)\n"
-        "  --max-cycles N     Stop after N cycles (default: unlimited)\n"
-        "  --trace            Print disassembly for each instruction\n"
-        "  --sram-size N      External SRAM size in bytes (default 262144 = 256 KB)\n"
-        "  --flash-size N     External Flash size in bytes (default 524288 = 512 KB;\n"
-        "                       use 1048576 for 1 MB or 2097152 for 2 MB Flash-modded P/ECE)\n"
-        "\n"
-        "The ELF entry point overrides the boot vector unless the binary is a full\n"
-        "firmware image (linked for Flash at 0x0C00000).\n",
-        argv0);
-}
 
 int main(int argc, char** argv) {
-    if (argc < 2) { usage(argv[0]); return 1; }
+    CLI::App app{"P/ECE bare-metal emulator (S1C33209)"};
+    argv = app.ensure_utf8(argv);
 
-    bool        use_gdb     = false;
-    uint16_t    gdb_port    = 1234;
-    bool        debug_rsp   = false;
-    uint64_t    max_cycles  = 0; // 0 = unlimited
-    bool        trace       = false;
-    std::size_t sram_size   = 0x040000; // 256 KB default
-    std::size_t flash_size  = 0x080000; // 512 KB default (standard P/ECE)
-    std::string elf_path;
+    std::string  elf_path;
+    bool         use_gdb   = false;
+    uint16_t     gdb_port  = 1234;
+    bool         debug_rsp = false;
+    uint64_t     max_cycles = 0;
+    bool         trace      = false;
+    std::size_t  sram_size  = 0x040000; // 256 KB
+    std::size_t  flash_size = 0x080000; // 512 KB
 
-    for (int i = 1; i < argc; i++) {
-        std::string arg = argv[i];
-        if (arg == "--gdb") {
-            use_gdb = true;
-            if (i + 1 < argc && argv[i+1][0] != '-')
-                gdb_port = static_cast<uint16_t>(std::atoi(argv[++i]));
-        } else if (arg == "--debug-rsp") {
-            debug_rsp = true;
-        } else if (arg == "--max-cycles" && i + 1 < argc) {
-            max_cycles = std::strtoull(argv[++i], nullptr, 10);
-        } else if (arg == "--sram-size" && i + 1 < argc) {
-            sram_size = static_cast<std::size_t>(std::strtoull(argv[++i], nullptr, 0));
-        } else if (arg == "--flash-size" && i + 1 < argc) {
-            flash_size = static_cast<std::size_t>(std::strtoull(argv[++i], nullptr, 0));
-        } else if (arg == "--trace") {
-            trace = true;
-        } else if (arg.rfind("--", 0) == 0) {
-            std::fprintf(stderr, "Unknown option: %s\n", arg.c_str());
-            return 1;
-        } else {
-            elf_path = arg;
-        }
-    }
+    app.add_option("elf", elf_path, "ELF binary to load and run")
+        ->required()
+        ->check(CLI::ExistingFile);
 
-    if (elf_path.empty()) { usage(argv[0]); return 1; }
+    auto* gdb_opt = app.add_flag("--gdb", use_gdb,
+        "Wait for GDB/LLDB connection before running");
+    app.add_option("--gdb-port", gdb_port,
+        "GDB RSP listen port (default: 1234)")
+        ->needs(gdb_opt);
+    app.add_flag("--debug-rsp", debug_rsp,
+        "Log RSP packets to stderr (requires --gdb)")
+        ->needs(gdb_opt);
+
+    app.add_option("--max-cycles", max_cycles,
+        "Stop after N cycles (default: unlimited, 0 = unlimited)");
+    app.add_flag("--trace", trace,
+        "Print disassembly for each instruction executed");
+
+    app.add_option("--sram-size", sram_size,
+        "External SRAM size in bytes (default: 262144 = 256 KB)");
+    app.add_option("--flash-size", flash_size,
+        "External Flash size in bytes (default: 524288 = 512 KB; "
+        "use 1048576 for 1 MB or 2097152 for 2 MB Flash-modded P/ECE)");
+
+    CLI11_PARSE(app, argc, argv);
 
     try {
         Bus bus(sram_size, flash_size);
-
-        // Create the CPU
         Cpu cpu(bus);
 
-        // Wire up the shared diagnostic sink (both CPU and Bus report through it)
         StderrDiagSink diag_sink;
         cpu.set_diag(&diag_sink);
         bus.set_diag(&diag_sink);
 
-        // Register semihosting handlers
         semihosting_init(bus, cpu);
 
-        // Load ELF
         uint32_t entry = elf_load(bus, elf_path);
         std::fprintf(stderr, "Loaded %s, entry=0x%06X\n", elf_path.c_str(), entry);
 
-        // Set PC to ELF entry point (overrides boot vector)
         cpu.state.pc = entry;
 
-        // GDB mode: wait for connection, then serve
         if (use_gdb) {
             GdbRsp gdb(bus, cpu, gdb_port, debug_rsp);
             gdb.serve();
             return semihosting_test_result() != 0 ? 1 : 0;
         }
 
-        // Run loop
         uint64_t total_cycles = 0;
         while (!cpu.state.in_halt) {
             if (trace) {
                 std::string dis = cpu.disasm(cpu.state.pc);
                 std::fprintf(stderr, "  %s\n", dis.c_str());
             }
-            int cycles = cpu.step();
-            total_cycles += cycles;
+            total_cycles += cpu.step();
             if (max_cycles && total_cycles >= max_cycles) {
                 std::fprintf(stderr, "Reached max-cycles limit (%llu)\n",
                     (unsigned long long)max_cycles);
@@ -112,11 +85,13 @@ int main(int argc, char** argv) {
         }
 
         if (cpu.state.fault) {
-            std::fprintf(stderr, "Faulted after %llu cycles\n", (unsigned long long)total_cycles);
+            std::fprintf(stderr, "Faulted after %llu cycles\n",
+                (unsigned long long)total_cycles);
             return 1;
         }
 
-        std::fprintf(stderr, "Halted after %llu cycles\n", (unsigned long long)total_cycles);
+        std::fprintf(stderr, "Halted after %llu cycles\n",
+            (unsigned long long)total_cycles);
 
         int result = semihosting_test_result();
         if (result == 0)  return 0;
