@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <unordered_set>
 
 class Bus;
 class Cpu;
@@ -32,8 +33,13 @@ private:
     int listen_fd_ = -1;
     bool no_ack_mode_ = false;
     bool debug_       = false;
+    std::unordered_set<uint32_t> breakpoints_;
 
     void handle_packet(int fd, const std::string& packet);
+
+    // Run the CPU: single=true → one instruction, false → until halt/fault/breakpoint.
+    // Returns the RSP stop reply string (e.g. "T05thread:1;").
+    std::string run(bool single);
 
     // Register access helpers
     std::string reg_read_all();

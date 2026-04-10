@@ -216,6 +216,31 @@ std::string GdbRsp::handle_qXfer(const std::string& pkt) {
 }
 
 // ---------------------------------------------------------------------------
+// Execution helper
+// ---------------------------------------------------------------------------
+
+// Run the CPU until a stop condition is reached.
+// single=true: execute exactly one instruction.
+// single=false: run until halt, fault, or a breakpoint address is hit.
+// Returns the RSP stop reply string.
+std::string GdbRsp::run(bool single) {
+    cpu_.state.in_halt = false;
+    if (single) {
+        cpu_.step();
+    } else {
+        while (!cpu_.state.in_halt) {
+            cpu_.step();
+            // Check breakpoint after each instruction (before next fetch).
+            if (!cpu_.state.in_halt && breakpoints_.count(cpu_.state.pc))
+                break;
+        }
+    }
+    // Distinguish fault (undefined opcode, jp.d %rb, …) from normal stop.
+    if (cpu_.state.fault) return "T04thread:1;"; // SIGILL
+    return "T05thread:1;";                        // SIGTRAP
+}
+
+// ---------------------------------------------------------------------------
 // Packet handler
 // ---------------------------------------------------------------------------
 
@@ -296,18 +321,9 @@ void GdbRsp::handle_packet(int fd, const std::string& pkt) {
     }
 
     case 'c':
-    case 's': {
-        bool single = (cmd == 's');
-        cpu_.state.in_halt = false;
-        if (single) {
-            cpu_.step();
-        } else {
-            while (!cpu_.state.in_halt)
-                cpu_.step();
-        }
-        send_rsp("T05thread:1;");
+    case 's':
+        send_rsp(run(cmd == 's'));
         break;
-    }
 
     // -----------------------------------------------------------------------
     // H — set thread for subsequent operations (bare-metal: always thread 1)
@@ -324,6 +340,31 @@ void GdbRsp::handle_packet(int fd, const std::string& pkt) {
     case 'T':
         send_rsp("OK");
         break;
+
+    // -----------------------------------------------------------------------
+    // Z / z — set / remove breakpoint
+    // Only Z0/z0 (software breakpoints) are supported.
+    // Virtual implementation: no instruction patching; the run() loop checks
+    // the PC against the breakpoint set after every instruction.
+    // -----------------------------------------------------------------------
+
+    case 'Z': {
+        if (pkt[1] != '0') { send_rsp(""); break; } // only Z0
+        uint32_t addr = 0; unsigned kind = 0;
+        std::sscanf(pkt.c_str() + 3, "%x,%x", &addr, &kind);
+        breakpoints_.insert(addr);
+        send_rsp("OK");
+        break;
+    }
+
+    case 'z': {
+        if (pkt[1] != '0') { send_rsp(""); break; } // only z0
+        uint32_t addr = 0; unsigned kind = 0;
+        std::sscanf(pkt.c_str() + 3, "%x,%x", &addr, &kind);
+        breakpoints_.erase(addr);
+        send_rsp("OK");
+        break;
+    }
 
     // -----------------------------------------------------------------------
     // Q — set / mode packets
@@ -353,14 +394,7 @@ void GdbRsp::handle_packet(int fd, const std::string& pkt) {
             // vCont;c or vCont;c:1 — continue
             // vCont;s or vCont;s:1 — step
             char action = pkt[6]; // 'c' or 's'
-            cpu_.state.in_halt = false;
-            if (action == 's') {
-                cpu_.step();
-            } else {
-                while (!cpu_.state.in_halt)
-                    cpu_.step();
-            }
-            send_rsp("T05thread:1;");
+            send_rsp(run(action == 's'));
         } else {
             send_rsp("");
         }
@@ -439,6 +473,7 @@ void GdbRsp::serve() {
     if (client < 0) return;
     std::fprintf(stderr, "GDB RSP: client connected\n");
     no_ack_mode_ = false;
+    breakpoints_.clear();
 
     std::string buf;
     char tmp[256];
