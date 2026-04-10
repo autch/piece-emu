@@ -16,6 +16,7 @@ find_package(GTest QUIET)
 # libpiece_core — shared emulation core (no external dependencies)
 # ---------------------------------------------------------------------------
 add_library(piece_core STATIC
+    diag.cpp
     cpu_core.cpp
     cpu_class0.cpp
     cpu_class1.cpp

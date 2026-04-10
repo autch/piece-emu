@@ -1,5 +1,6 @@
 #include "bus.hpp"
 #include "cpu.hpp"
+#include "diag.hpp"
 #include "elf_loader.hpp"
 #include "gdb_rsp.hpp"
 #include "semihosting.hpp"
@@ -63,6 +64,11 @@ int main(int argc, char** argv) {
 
         // Create the CPU
         Cpu cpu(bus);
+
+        // Wire up the shared diagnostic sink (both CPU and Bus report through it)
+        StderrDiagSink diag_sink;
+        cpu.set_diag(&diag_sink);
+        bus.set_diag(&diag_sink);
 
         // Register semihosting handlers
         semihosting_init(bus, cpu);

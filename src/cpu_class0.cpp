@@ -1,5 +1,6 @@
 #include "cpu_impl.hpp"
 #include "bus.hpp"
+#include <format>
 
 // ============================================================================
 // Helper: handle delay slot for class 0 branches
@@ -84,6 +85,7 @@ void Cpu::h_call_rb(Cpu& cpu, uint16_t insn) {
     uint32_t ret_addr = cpu.state.pc + (delayed ? 2 : 0);
     cpu.state.sp -= 4;
     cpu.bus_.write32(cpu.state.sp, ret_addr);
+    if (delayed) cpu.state.delay_caller = 2;
     do_c0_jump(cpu, target, delayed);
 }
 
@@ -91,6 +93,7 @@ void Cpu::h_ret(Cpu& cpu, uint16_t insn) {
     cpu.flush_ext();
     bool delayed = (insn >> 8) & 1;
     uint32_t target = cpu.bus_.read32(cpu.state.sp); cpu.state.sp += 4;
+    if (delayed) cpu.state.delay_caller = 1;
     do_c0_jump(cpu, target, delayed);
 }
 
@@ -98,8 +101,19 @@ void Cpu::h_jp_rb(Cpu& cpu, uint16_t insn) {
     cpu.flush_ext();
     int rb_n = insn & 0xF;
     bool delayed = (insn >> 8) & 1;
+    uint32_t fault_pc = cpu.state.pc - 2;
+
+    // jp.d %rb is forbidden: a hardware bug causes the DMA controller to skip
+    // the delay slot on certain memory transactions.  Refuse to execute it.
+    if (delayed) {
+        cpu.diag_fault("jp_d_rb", fault_pc,
+            std::format("jp.d %r{} at 0x{:06X}: forbidden (hardware DMA bug, use jp %%r{})",
+                        rb_n, fault_pc, rb_n));
+        return;
+    }
+
     uint32_t target = cpu.state.r[rb_n];
-    do_c0_jump(cpu, target, delayed);
+    do_c0_jump(cpu, target, false);
 }
 
 // ============================================================================
@@ -142,6 +156,7 @@ void Cpu::h_call_simm8(Cpu& cpu, uint16_t insn) {
     uint32_t ret_addr = cpu.state.pc + (delayed ? 2 : 0);
     cpu.state.sp -= 4;
     cpu.bus_.write32(cpu.state.sp, ret_addr);
+    if (delayed) cpu.state.delay_caller = 2;
     do_c0_jump(cpu, target, delayed);
 }
 

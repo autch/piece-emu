@@ -1,7 +1,7 @@
 #include "bus.hpp"
 #include <cstring>
-#include <stdexcept>
 #include <format>
+#include <stdexcept>
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -77,7 +77,12 @@ uint8_t Bus::read8(uint32_t addr) {
 
 uint16_t Bus::read16(uint32_t addr) {
     addr &= 0x0FFF'FFFF;
-    addr &= ~1u; // halfword align
+    if (addr & 1) {
+        diag_->report({DiagLevel::Fault, "misalign_read16", 0,
+            std::format("misaligned halfword read at 0x{:06X}", addr), ""});
+        fault_pending_ = true;
+        addr &= ~1u;
+    }
     switch (classify(addr)) {
     case Region::IRAM:
         return le16(&iram_[addr & (IRAM_SIZE - 1)]);
@@ -100,7 +105,12 @@ uint16_t Bus::read16(uint32_t addr) {
 
 uint32_t Bus::read32(uint32_t addr) {
     addr &= 0x0FFF'FFFF;
-    addr &= ~3u; // word align
+    if (addr & 3) {
+        diag_->report({DiagLevel::Fault, "misalign_read32", 0,
+            std::format("misaligned word read at 0x{:06X}", addr), ""});
+        fault_pending_ = true;
+        addr &= ~3u;
+    }
     switch (classify(addr)) {
     case Region::IRAM:
         return le32(&iram_[addr & (IRAM_SIZE - 1)]);
@@ -146,7 +156,12 @@ void Bus::write8(uint32_t addr, uint8_t val) {
 
 void Bus::write16(uint32_t addr, uint16_t val) {
     addr &= 0x0FFF'FFFF;
-    addr &= ~1u;
+    if (addr & 1) {
+        diag_->report({DiagLevel::Fault, "misalign_write16", 0,
+            std::format("misaligned halfword write at 0x{:06X}", addr), ""});
+        fault_pending_ = true;
+        addr &= ~1u;
+    }
     switch (classify(addr)) {
     case Region::IRAM:
         put_le16(&iram_[addr & (IRAM_SIZE - 1)], val);
@@ -168,7 +183,12 @@ void Bus::write16(uint32_t addr, uint16_t val) {
 
 void Bus::write32(uint32_t addr, uint32_t val) {
     addr &= 0x0FFF'FFFF;
-    addr &= ~3u;
+    if (addr & 3) {
+        diag_->report({DiagLevel::Fault, "misalign_write32", 0,
+            std::format("misaligned word write at 0x{:06X}", addr), ""});
+        fault_pending_ = true;
+        addr &= ~3u;
+    }
     switch (classify(addr)) {
     case Region::IRAM:
         put_le32(&iram_[addr & (IRAM_SIZE - 1)], val);

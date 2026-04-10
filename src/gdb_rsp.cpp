@@ -474,6 +474,7 @@ void GdbRsp::serve() {
     std::fprintf(stderr, "GDB RSP: client connected\n");
     no_ack_mode_ = false;
     breakpoints_.clear();
+    cpu_.set_strict(true);   // escalate soft violations to faults while debugger is attached
 
     std::string buf;
     char tmp[256];
@@ -510,5 +511,6 @@ void GdbRsp::serve() {
         }
     }
     ::close(client);
+    cpu_.set_strict(false);  // back to warning mode after debugger disconnects
     std::fprintf(stderr, "GDB RSP: client disconnected\n");
 }

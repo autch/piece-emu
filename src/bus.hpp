@@ -1,4 +1,5 @@
 #pragma once
+#include "diag.hpp"
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -52,6 +53,14 @@ public:
     // Cycle counter (incremented by each access)
     uint32_t cycles = 0;
 
+    // Attach a diagnostic sink (optional; defaults to StderrDiagSink).
+    // The Bus never owns the sink pointer.
+    void set_diag(DiagSink* sink) { diag_ = sink ? sink : &default_sink_; }
+
+    // Returns true (and clears the flag) if a bus-level fault occurred since
+    // the last call.  Cpu::step() polls this after each dispatch to halt the CPU.
+    bool take_fault() { bool f = fault_pending_; fault_pending_ = false; return f; }
+
     explicit Bus(std::size_t flash_size = 0x80000 /* 512 KB default */);
 
     // Load data into flash ROM
@@ -83,6 +92,10 @@ private:
     std::vector<uint8_t> sram_;
     std::vector<uint8_t> flash_;
     std::vector<IoHandler> io_handlers_; // indexed by (addr - IOREG_BASE) / 2
+
+    StderrDiagSink default_sink_;
+    DiagSink*      diag_         = &default_sink_;
+    bool           fault_pending_ = false;
 
     enum class Region { IRAM, SRAM, FLASH, IO, NONE };
     Region classify(uint32_t addr) const;

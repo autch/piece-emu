@@ -1,4 +1,5 @@
 #pragma once
+#include "diag.hpp"
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -86,6 +87,11 @@ struct CpuState {
     // (branching from within a delay slot is undefined; we won't handle it)
     bool in_delay_slot = false;
     uint32_t delay_target = 0; // branch target to take after delay slot
+
+    // Which instruction initiated the current delay slot.
+    // Used to warn about SP-modifying instructions in call.d/ret.d delay slots.
+    // 0 = other (jp.d, jr**.d), 1 = ret.d, 2 = call.d
+    uint8_t delay_caller = 0;
 };
 
 // ============================================================================
@@ -108,6 +114,14 @@ public:
     // Does NOT consume state or cycles.
     std::string disasm(uint32_t addr) const;
 
+    // Attach a diagnostic sink.  Defaults to StderrDiagSink; never null.
+    // The Cpu never owns the sink pointer.
+    void set_diag(DiagSink* sink) { diag_ = sink ? sink : &default_sink_; }
+
+    // Enable strict mode: violations that would be warnings become faults.
+    // Called by GdbRsp::serve() when a debugger connects/disconnects.
+    void set_strict(bool s) { strict_ = s; }
+
     // Raise a trap (interrupt/exception). Called by bus devices or internally.
     // no < 16: non-maskable; no >= 16: maskable (checks IE, IL).
     void assert_trap(int no, int level);
@@ -123,7 +137,20 @@ public:
     int32_t  ext_pcrel(uint32_t imm8) const;
     void flush_ext();
 
+    // Emit a warning-level diagnostic (does NOT halt the CPU).
+    void diag_warn(const char* category, uint32_t pc, std::string detail);
+
+    // Emit a fault-level diagnostic and halt the CPU (sets fault + in_halt).
+    void diag_fault(const char* category, uint32_t pc, std::string detail);
+
+    // In strict mode (debugger attached), escalate to fault; otherwise warn.
+    void diag_warn_or_fault(const char* category, uint32_t pc, std::string detail);
+
 private:
+    StderrDiagSink default_sink_;
+    DiagSink*      diag_    = &default_sink_;
+    bool           strict_  = false;  // escalate soft violations to faults
+
     Bus& bus_;
 
     using Handler = void(*)(Cpu&, uint16_t);
