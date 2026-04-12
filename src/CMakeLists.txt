@@ -39,6 +39,7 @@ add_library(piece_core STATIC
     peripheral_portctrl.cpp
     peripheral_bcu_area.cpp
     peripheral_wdt.cpp
+    peripheral_rtc.cpp
 )
 
 target_include_directories(piece_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -69,6 +70,7 @@ if(GTest_FOUND)
         tests/unit/test_peripheral_t8.cpp
         tests/unit/test_peripheral_t16.cpp
         tests/unit/test_peripheral_portctrl.cpp
+        tests/unit/test_peripheral_rtc.cpp
     )
 
     target_link_libraries(piece_unit_tests PRIVATE piece_core GTest::gtest_main)

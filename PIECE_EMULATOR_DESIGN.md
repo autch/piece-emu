@@ -794,6 +794,53 @@ echo "Exit code: $?"   # 0=全テストPASS, 非0=いずれかFAIL
 
 `--headless` モードではLCD描画・サウンドを無効化し、TEST_RESULT ポートへの書き込みで終了する。
 
+### 4.5 実装状況（2026-04時点）
+
+全ポートが `src/semihosting.cpp` に実装済み。テストプログラム向けヘッダは 2 種類ある。
+
+| ファイル | 用途 |
+|---|---|
+| `src/tests/bare_metal/semihosting.h` | 既存のベアメタルテスト用（`semi_*` 関数群）|
+| `src/tests/bare_metal/piece_emu_debug.h` | 新規テスト向け完全版（`EMU_*` マクロ + `semi_*` 相当のインライン関数）|
+
+#### CONSOLE_STR のアドレス実装について
+
+設計仕様（上記 §4.2）は `+0x04` と記載しているが、S1C33 の 32 ビット書き込みは 2 回の 16 ビット bus write に分割される。実装では次の 2 ハーフワードをそれぞれ登録している。
+
+```
++0x02  CONSOLE_STR lo (W16) 文字列アドレスの下位16ビットをラッチ
++0x04  CONSOLE_STR hi (W16) 上位16ビット受信時に (hi<<16)|lo を合成してから文字列を出力
+```
+
+`*(volatile uint32_t*)0x060002u = ptr;` という 32 ビット書き込みを行うと、
+lo が +0x02 に書かれてラッチされ、hi が +0x04 に書かれた時点で出力がトリガされる。
+このため、バーストモードのベアメタルコードおよび `semihosting.h` の `semi_puts()` と完全互換である。
+
+#### BKPT_SET はヘッドレスモード専用 ⚠️
+
+`BKPT_SET` / `BKPT_CLR` が操作するブレークポイントセット（`Cpu::breakpoints`）と、
+GDB RSP スタブが管理するブレークポイントセット（`GdbRsp::breakpoints_`）は**現在は別物**である。
+
+| モード | 発火時の動作 |
+|---|---|
+| ヘッドレス（`piece-emu` 直接実行）| `cpu_.step()` 内でレジスタダンプを stderr に出力し halt。正常動作。|
+| GDB 接続中 | `cpu_.step()` が halt させるため `GdbRsp::run()` はループを抜けるが、GDB には「不明な halt」として届く。SIGTRAP 理由は伝わらず、GDB 側でブレークポイントとして認識されない。|
+
+**将来の修正方針：** ブレークポイントチェックを `cpu_.step()` から除去し、
+呼び出し側（ヘッドレスの main ループと `GdbRsp::run()`）でそれぞれ `cpu_.breakpoints` を
+参照するように変更する。`GdbRsp::run()` は自身の `breakpoints_` と `cpu_.breakpoints` の
+和集合をチェックすることで、セミホスティング経由のブレークポイントも SIGTRAP として返せる。
+
+```cpp
+// GdbRsp::run() の修正イメージ
+if (breakpoints_.count(cpu_.state.pc) ||
+    cpu_.breakpoints.count(cpu_.state.pc))
+    break;  // → S05 SIGTRAP として返る
+```
+
+また、GDB 接続時に `gdb_rsp.cpp` が `breakpoints_.clear()` するのと同様に
+`cpu_.breakpoints.clear()` も実行する必要がある。
+
 ---
 
 ## 5. エラッタ（エミュレータに影響するもの）

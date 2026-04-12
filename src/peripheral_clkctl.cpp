@@ -65,6 +65,16 @@ void ClockControl::write_single(uint32_t addr, uint8_t val)
     }
 }
 
+void ClockControl::set_p07(bool slow)
+{
+    // P07 controls OSC3 speed: 0=48 MHz, 1=24 MHz.
+    // Mirror to PWRCTL.CLKCHG (bit 2) to keep cpu_clock_hz() consistent.
+    uint8_t new_pwrctl = slow ? (pwrctl_ | 0x04u) : (pwrctl_ & ~0x04u);
+    if (new_pwrctl == pwrctl_) return;
+    pwrctl_ = new_pwrctl;
+    if (on_clock_change) on_clock_change(cpu_clock_hz());
+}
+
 void ClockControl::attach(Bus& bus)
 {
     // 0x040140: c_CLKSEL_T8_45 (lo) + Dummy (hi) — not needed, absorb

@@ -34,6 +34,7 @@ public:
                 std::function<void(int, int)> assert_nmi);
 
     void tick(uint64_t cpu_cycles) override;
+    uint64_t next_wake_cycle() const override { return UINT64_MAX; }
 
 private:
     const ClockControl* clk_ = nullptr;

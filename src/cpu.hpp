@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <unordered_set>
 
 class Bus;
 
@@ -105,6 +106,11 @@ struct CpuState {
 class Cpu {
 public:
     CpuState state;
+
+    // Software breakpoints set via semihosting BKPT_SET/CLR.
+    // When step() is about to execute an instruction at a breakpoint address,
+    // it prints a register dump and halts.
+    std::unordered_set<uint32_t> breakpoints;
 
     explicit Cpu(Bus& bus);
 

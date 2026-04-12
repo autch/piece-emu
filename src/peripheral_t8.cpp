@@ -60,6 +60,16 @@ void Timer8bit::attach(Bus& bus,
     });
 }
 
+uint64_t Timer8bit::next_wake_cycle() const
+{
+    if (!(ctl_ & 0x01)) return UINT64_MAX; // PTRUN=0: stopped
+    uint64_t cpc = cycles_per_count();
+    if (cpc == 0) return UINT64_MAX;       // clock source disabled
+    // ptd_==0: underflow fires at next_tick_cycle_ (checked before decrement)
+    // ptd_>0:  ptd_ decrements remain before underflow
+    return next_tick_cycle_ + static_cast<uint64_t>(ptd_) * cpc;
+}
+
 void Timer8bit::tick(uint64_t cpu_cycles)
 {
     // Not running

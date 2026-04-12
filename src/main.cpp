@@ -11,8 +11,10 @@
 #include "peripheral_portctrl.hpp"
 #include "peripheral_bcu_area.hpp"
 #include "peripheral_wdt.hpp"
+#include "peripheral_rtc.hpp"
 
 #include <CLI/CLI.hpp>
+#include <algorithm>
 #include <cstdio>
 #include <stdexcept>
 #include <string>
@@ -64,7 +66,13 @@ int main(int argc, char** argv) {
         cpu.set_diag(&diag_sink);
         bus.set_diag(&diag_sink);
 
-        semihosting_init(bus, cpu);
+        // Declared early so semihosting lambdas can capture by reference.
+        uint64_t total_cycles = 0;
+
+        semihosting_init(bus, cpu, {
+            .get_cycles = [&]() -> uint64_t { return total_cycles; },
+            .set_trace  = [&](bool on) { trace = on; }
+        });
 
         // Peripheral initialisation
         InterruptController intc;
@@ -82,7 +90,7 @@ int main(int argc, char** argv) {
         for (int i = 0; i < 6; i++) t16_ch[i].attach(bus, intc, clk);
 
         PortCtrl portctrl;
-        portctrl.attach(bus, intc);
+        portctrl.attach(bus, intc, &clk);
 
         BcuAreaCtrl bcu_area;
         bcu_area.attach(bus, cpu);
@@ -90,6 +98,9 @@ int main(int argc, char** argv) {
         WatchdogTimer wdt;
         wdt.attach(bus, clk,
             [&cpu](int no, int lvl) { cpu.assert_trap(no, lvl); });
+
+        ClockTimer rtc;
+        rtc.attach(bus, intc, clk);
 
         uint32_t entry = elf_load(bus, elf_path);
         std::fprintf(stderr, "Loaded %s, entry=0x%06X\n", elf_path.c_str(), entry);
@@ -102,22 +113,60 @@ int main(int argc, char** argv) {
             return semihosting_test_result() != 0 ? 1 : 0;
         }
 
-        uint64_t total_cycles = 0;
-        while (!cpu.state.in_halt) {
-            if (trace) {
-                std::string dis = cpu.disasm(cpu.state.pc);
-                std::fprintf(stderr, "  %s\n", dis.c_str());
+        // Tick all cycle-driven peripherals to a given cycle count.
+        auto tick_all = [&](uint64_t cycles) {
+            for (int i = 0; i < 4; i++) t8_ch[i].tick(cycles);
+            for (int i = 0; i < 6; i++) t16_ch[i].tick(cycles);
+            wdt.tick(cycles);
+            rtc.tick(cycles);
+        };
+
+        bool limit_hit = false;
+
+        for (;;) {
+            // Inner loop: normal CPU execution until HLT/SLEEP or fault.
+            while (!cpu.state.in_halt && !cpu.state.fault) {
+                if (trace) {
+                    std::string dis = cpu.disasm(cpu.state.pc);
+                    std::fprintf(stderr, "  %s\n", dis.c_str());
+                }
+                total_cycles += cpu.step();
+                tick_all(total_cycles);
+                if (max_cycles && total_cycles >= max_cycles) {
+                    std::fprintf(stderr, "Reached max-cycles limit (%llu)\n",
+                        (unsigned long long)max_cycles);
+                    limit_hit = true;
+                    break;
+                }
             }
-            total_cycles += cpu.step();
-            // Tick cycle-driven peripherals after each CPU step
-            for (int i = 0; i < 4; i++) t8_ch[i].tick(total_cycles);
-            for (int i = 0; i < 6; i++) t16_ch[i].tick(total_cycles);
-            wdt.tick(total_cycles);
-            if (max_cycles && total_cycles >= max_cycles) {
-                std::fprintf(stderr, "Reached max-cycles limit (%llu)\n",
-                    (unsigned long long)max_cycles);
+
+            if (limit_hit || cpu.state.fault) break;
+
+            // HLT/SLEEP: fast-forward to the earliest pending peripheral event.
+            uint64_t wake = UINT64_MAX;
+            for (int i = 0; i < 4; i++)
+                wake = std::min(wake, t8_ch[i].next_wake_cycle());
+            for (int i = 0; i < 6; i++)
+                wake = std::min(wake, t16_ch[i].next_wake_cycle());
+            wake = std::min(wake, rtc.next_wake_cycle());
+
+            if (wake == UINT64_MAX) {
+                std::fprintf(stderr,
+                    "Deadlock: CPU halted with no pending peripheral wakeup "
+                    "after %llu cycles\n", (unsigned long long)total_cycles);
                 break;
             }
+            if (max_cycles && wake > max_cycles) {
+                std::fprintf(stderr, "Reached max-cycles limit (%llu)\n",
+                    (unsigned long long)max_cycles);
+                limit_hit = true;
+                break;
+            }
+
+            // Jump to the wake cycle and fire peripherals.
+            // One of them will call assert_trap(), which clears in_halt.
+            total_cycles = wake;
+            tick_all(total_cycles);
         }
 
         if (cpu.state.fault) {

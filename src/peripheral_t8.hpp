@@ -34,6 +34,7 @@ public:
                 const ClockControl& clk);
 
     void tick(uint64_t cpu_cycles) override;
+    uint64_t next_wake_cycle() const override;
 
     // Direct register access (for unit tests)
     uint8_t ctl() const { return ctl_; }

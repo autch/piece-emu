@@ -282,6 +282,27 @@ static DelayClass delay_slot_class(uint16_t insn) {
 int Cpu::step() {
     if (state.in_halt) return 1;
 
+    // Software breakpoint check (semihosting BKPT_SET).
+    if (!breakpoints.empty() && breakpoints.count(state.pc)) {
+        std::fprintf(stderr,
+            "[BKPT] hit breakpoint at 0x%06X\n"
+            "Registers:\n"
+            "  R 0=%08X  R 1=%08X  R 2=%08X  R 3=%08X\n"
+            "  R 4=%08X  R 5=%08X  R 6=%08X  R 7=%08X\n"
+            "  R 8=%08X  R 9=%08X  R10=%08X  R11=%08X\n"
+            "  R12=%08X  R13=%08X  R14=%08X  R15=%08X\n"
+            "   PC=%08X   SP=%08X  PSR=%08X\n"
+            "  ALR=%08X  AHR=%08X\n",
+            state.pc,
+            state.r[0],  state.r[1],  state.r[2],  state.r[3],
+            state.r[4],  state.r[5],  state.r[6],  state.r[7],
+            state.r[8],  state.r[9],  state.r[10], state.r[11],
+            state.r[12], state.r[13], state.r[14], state.r[15],
+            state.pc, state.sp, state.psr.raw, state.alr, state.ahr);
+        state.in_halt = true;
+        return 1;
+    }
+
     uint32_t insn_pc      = state.pc;
     uint16_t insn         = bus_.fetch16(insn_pc);
     bool     in_slot      = state.in_delay_slot;

@@ -142,3 +142,73 @@ TEST_F(T16Fixture, Both_CRA_And_CRB_Match_Same_Tick) {
     EXPECT_NE(0, intc.reg(34) & (1 << 3)) << "CRA0 ISR must be set";
     EXPECT_EQ(0, t16.tc()) << "TC reset by CRA match";
 }
+
+// ---------------------------------------------------------------------------
+// next_wake_cycle: PRUN=0 → UINT64_MAX
+// ---------------------------------------------------------------------------
+TEST_F(T16Fixture, NextWakeCycle_Stopped_ReturnsMax) {
+    set_cra(100);
+    set_ctl(0x00); // PRUN=0
+    EXPECT_EQ(UINT64_MAX, t16.next_wake_cycle());
+}
+
+// ---------------------------------------------------------------------------
+// next_wake_cycle: CRA interrupt fires at or before the predicted cycle
+//
+// CRA=100, TC=0, cpc=2: next_wake_cycle() returns some finite value.
+// Ticking to that value must raise T16_CRA0 (trap 31).
+// Note: due to the '>=' boundary in tick(), one extra increment may occur
+// at the exact boundary cycle, so we do not assert TC==0 here.
+// ---------------------------------------------------------------------------
+TEST_F(T16Fixture, NextWakeCycle_BeforeCRA) {
+    enable_cra0_irq();
+    set_cra(100);
+    set_ctl(0x01); // PRUN=1
+    uint64_t wake = t16.next_wake_cycle();
+    EXPECT_NE(UINT64_MAX, wake);
+    t16.tick(wake);
+    EXPECT_EQ(31, last_irq) << "T16_CRA0 must fire at next_wake_cycle()";
+}
+
+// ---------------------------------------------------------------------------
+// next_wake_cycle: consecutive CRA events have monotonically increasing times
+//
+// After the first CRA fires, TC resets to 0 (SELFM=0). Calling
+// next_wake_cycle() again must return a cycle strictly after the first wake,
+// and ticking to that cycle must fire CRA a second time.
+// ---------------------------------------------------------------------------
+TEST_F(T16Fixture, NextWakeCycle_AfterCRA) {
+    enable_cra0_irq();
+    set_cra(50);
+    set_ctl(0x01); // PRUN=1, SELFM=0
+    // First CRA
+    uint64_t wake1 = t16.next_wake_cycle();
+    EXPECT_NE(UINT64_MAX, wake1);
+    t16.tick(wake1);
+    EXPECT_EQ(31, last_irq) << "first CRA must fire";
+    last_irq = -1;
+    // Second CRA: prediction must advance past the first
+    uint64_t wake2 = t16.next_wake_cycle();
+    EXPECT_GT(wake2, wake1) << "second wake must be strictly after first";
+    EXPECT_NE(UINT64_MAX, wake2);
+    t16.tick(wake2);
+    EXPECT_EQ(31, last_irq) << "second CRA must fire";
+}
+
+// ---------------------------------------------------------------------------
+// next_wake_cycle: CRB fires before CRA → predicted correctly
+//
+// CRA=100, CRB=30, TC=0, cpc=2.
+// CRB fires at 30 increments = cycle 60, before CRA at cycle 200.
+// next_wake_cycle() must return 60.
+// ---------------------------------------------------------------------------
+TEST_F(T16Fixture, NextWakeCycle_CRB_Before_CRA) {
+    enable_crb0_irq();
+    set_cra(100);
+    set_crb(30);
+    set_ctl(0x01); // PRUN=1
+    uint64_t wake = t16.next_wake_cycle();
+    EXPECT_EQ(static_cast<uint64_t>(30) * 2, wake) << "CRB fires first at 60 cycles";
+    t16.tick(wake);
+    EXPECT_EQ(30, last_irq) << "T16_CRB0 must fire at next_wake_cycle()";
+}

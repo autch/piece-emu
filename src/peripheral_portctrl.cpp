@@ -1,4 +1,5 @@
 #include "peripheral_portctrl.hpp"
+#include "peripheral_clkctl.hpp"
 #include "bus.hpp"
 
 // K port addresses
@@ -51,9 +52,10 @@ void PortCtrl::check_key_irq()
         intc_->raise(InterruptController::IrqSource::KEY1);
 }
 
-void PortCtrl::attach(Bus& bus, InterruptController& intc)
+void PortCtrl::attach(Bus& bus, InterruptController& intc, ClockControl* clk)
 {
     intc_ = &intc;
+    clk_  = clk;
 
     // K port — 0x0402C0..0x0402C4 (5 bytes, 3 halfword handlers)
 
@@ -102,6 +104,8 @@ void PortCtrl::attach(Bus& bus, InterruptController& intc)
     }
 
     // P port — 0x0402D0..0x0402DF (16 bytes, 8 halfword handlers)
+    // Halfword i=0 covers 0x0402D0: lo=rCFP(P0), hi=rPD(P0).
+    // P07 = Port 0 rPD bit 7 (pport_[1] bit 7); notify ClockControl on change.
     for (int i = 0; i < 8; i++) {
         bus.register_io(static_cast<uint32_t>(PPORT_BASE + i * 2), {
             [this, i](uint32_t) -> uint16_t {
@@ -109,8 +113,15 @@ void PortCtrl::attach(Bus& bus, InterruptController& intc)
                        (static_cast<uint16_t>(pport_[i * 2 + 1]) << 8);
             },
             [this, i](uint32_t, uint16_t v) {
+                uint8_t old_hi    = pport_[i * 2 + 1];
                 pport_[i * 2]     = static_cast<uint8_t>(v);
                 pport_[i * 2 + 1] = static_cast<uint8_t>(v >> 8);
+                // P07 detection: halfword i=0, hi byte = rPD(P0), bit 7
+                if (i == 0 && clk_) {
+                    uint8_t new_hi = pport_[1];
+                    if ((old_hi ^ new_hi) & 0x80)
+                        clk_->set_p07((new_hi & 0x80) != 0);
+                }
             }
         });
     }

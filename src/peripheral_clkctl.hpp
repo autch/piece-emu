@@ -61,6 +61,10 @@ public:
     // Called when CPU clock frequency changes (e.g. CLKCHG bit toggled).
     std::function<void(uint32_t new_hz)> on_clock_change;
 
+    // Called by PortCtrl when the P07 pin state changes.
+    // slow=true (P07=1): 24 MHz;  slow=false (P07=0): 48 MHz.
+    void set_p07(bool slow);
+
     // Direct register access (for unit tests)
     uint8_t pwrctl()          const { return pwrctl_; }
     uint8_t clksel_t8()       const { return clksel_t8_; }

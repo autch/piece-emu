@@ -104,6 +104,33 @@ TEST_F(T8Fixture, Underflow_FiresIRQ_And_Reloads) {
 }
 
 // ---------------------------------------------------------------------------
+// next_wake_cycle: PTRUN=0 → UINT64_MAX
+// ---------------------------------------------------------------------------
+TEST_F(T8Fixture, NextWakeCycle_Stopped_ReturnsMax) {
+    configure(0x02, 5); // PSET=1, PTRUN=0
+    EXPECT_EQ(UINT64_MAX, t8.next_wake_cycle());
+}
+
+// ---------------------------------------------------------------------------
+// next_wake_cycle: accurate prediction of underflow cycle
+//
+// Setup: RLD=3, PTD=3 (after PSET), cpc=2.
+// next_tick_cycle_ starts at 0.  Underflow fires when ptd_ hits 0 then
+// gets incremented again: after 3 decrements at cycles 0,2,4 ptd_=0,
+// then the underflow tick fires at cycle 6 = next_tick_cycle_=6.
+// With ptd_=3 and cpc=2: next_wake_cycle = 0 + 3*2 = 6.
+// ---------------------------------------------------------------------------
+TEST_F(T8Fixture, NextWakeCycle_Running_Accurate) {
+    configure(0x03, 3); // PTRUN=1, PSET=1, RLD=3, PTD=3
+    uint64_t wake = t8.next_wake_cycle();
+    EXPECT_NE(UINT64_MAX, wake) << "Timer is running";
+    // Confirm: ticking exactly to that cycle fires the underflow
+    enable_irq();
+    t8.tick(wake);
+    EXPECT_EQ(52, last_irq) << "T8_UF0 must fire exactly at next_wake_cycle()";
+}
+
+// ---------------------------------------------------------------------------
 // ISR flag is set by underflow regardless of IEN/priority
 // ---------------------------------------------------------------------------
 TEST_F(T8Fixture, Underflow_SetsISR_Unconditionally) {

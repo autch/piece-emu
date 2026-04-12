@@ -3,6 +3,7 @@
 #include <cstdint>
 
 class Bus;
+class ClockControl;
 
 // ============================================================================
 // PortCtrl — S1C33209 input/output port controller
@@ -60,7 +61,8 @@ class Bus;
 // ============================================================================
 class PortCtrl {
 public:
-    void attach(Bus& bus, InterruptController& intc);
+    // clk: optional ClockControl for P07 (OSC3 speed) notification.
+    void attach(Bus& bus, InterruptController& intc, ClockControl* clk = nullptr);
 
     // Called by the frontend (SDL) when button state changes.
     // bits: each bit corresponds to K5x or K6x input lines.
@@ -88,6 +90,7 @@ private:
     uint8_t pport_[16] = {};
 
     InterruptController* intc_ = nullptr;
+    ClockControl*        clk_  = nullptr;
 
     // Re-evaluate key interrupt conditions after K5D/K6D change.
     void check_key_irq();

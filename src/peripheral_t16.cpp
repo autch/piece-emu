@@ -1,6 +1,7 @@
 #include "peripheral_t16.hpp"
 #include "peripheral_clkctl.hpp"
 #include "bus.hpp"
+#include <algorithm>
 
 static constexpr uint32_t T16_BASE = 0x048180;
 
@@ -68,6 +69,42 @@ void Timer16bit::attach(Bus& bus,
             ctl_ = val & ~0x02u; // PRESET is self-clearing
         }
     });
+}
+
+uint64_t Timer16bit::next_wake_cycle() const
+{
+    if (!(ctl_ & 0x01)) return UINT64_MAX; // PRUN=0
+    uint64_t cpc = cycles_per_count();
+    if (cpc == 0) return UINT64_MAX;
+
+    bool selfm0 = !(ctl_ & 0x40); // SELFM=0: CRA resets TC
+    uint64_t wake = UINT64_MAX;
+
+    // Counts until next CRA match.
+    uint64_t counts_to_cra = UINT64_MAX;
+    if (cra_ != 0) {
+        counts_to_cra = (tc_ < cra_)
+            ? static_cast<uint64_t>(cra_ - tc_)
+            : static_cast<uint64_t>(cra_); // tc_ >= cra_: wait for next period
+        wake = std::min(wake, next_tick_cycle_ + counts_to_cra * cpc);
+    }
+
+    // Counts until next CRB match (CRB does not reset TC).
+    if (crb_ != 0) {
+        uint64_t counts_to_crb;
+        if (tc_ < crb_) {
+            counts_to_crb = static_cast<uint64_t>(crb_ - tc_);
+        } else if (selfm0 && cra_ != 0) {
+            // CRB already passed this period; wait for CRA reset then count to CRB
+            counts_to_crb = counts_to_cra + static_cast<uint64_t>(crb_);
+        } else {
+            // SELFM=1 or no CRA: TC wraps at 0x10000
+            counts_to_crb = static_cast<uint64_t>(0x10000u - tc_) + crb_;
+        }
+        wake = std::min(wake, next_tick_cycle_ + counts_to_crb * cpc);
+    }
+
+    return wake;
 }
 
 void Timer16bit::tick(uint64_t cpu_cycles)
