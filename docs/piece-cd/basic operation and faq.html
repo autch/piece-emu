@@ -1,0 +1,355 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+   <META name="GENERATOR" content="IBM HomePage Builder 2001 V5.0.4 for Windows">
+   <title>P/ECE DOCUMENT</title>
+</head>
+<body text="#FFFFFF" bgcolor="#575868" link="#FFD559" vlink="#BB9126" alink="#6600CC">
+&nbsp;
+<table BORDER=0 >
+  <tr>
+<td NOWRAP HEIGHT="17"><font size=+1><font color="#666666">■</font><font color="#999999">■</font><font color="#CCCCCC">■</font><font color="#FFFFFF">■</font><b>　
+<font color="#FFFF99">ドキュメント</font>　</b>■<font color="#CCCCCC">■</font><font color="#999999">■</font><font color="#666666">■</font></font></td>
+</tr>
+</table>
+
+<hr width="600" align="left">
+<table border=0 cellspacing=3 cellpadding=0 height="8" >
+  <tr> 
+    <td NOWRAP height="2"> 
+      <pre>　操作法、ならびにソフトウェア関係のマニュアルです。
+　初めてP/ECEを使う時にご参照ください。
+　（ハードウェア関係については、<a href="Hardspec_f.htm" target="_top">HARDSPEC</a>を参照してください）</pre>
+    </td>
+  </tr>
+</table>
+
+<hr width="600" align="left">
+<table border=0 cellspacing=3 cellpadding=0 height="8" >
+  <tr> 
+    <td NOWRAP height="2"><b><font color="#CCFFFF"><font size=+1>【P/ECE開発環境のインストール】</font></font></b></td>
+  </tr>
+</table>
+<table border=0 cellspacing=3 cellpadding=0 height="8" >
+  <tr> 
+    <td NOWRAP height="2"> 
+      <pre>　まず、「P/ECE開発環境」をインストールしてください。
+　P/ECE付属のCD-ROMをパソコンにセットすると、インストールが始まります。
+（始まらない場合は、CD-ROMの中の「<b>setup.exe</b>」をダブルクリックしてください）
+　インストール先を指定可能ですが、途中のフォルダ名にスペースが入る場所へは
+　インストール出来ません。</pre>
+    </td>
+  </tr>
+</table>
+<hr width="600" align="left">
+<table border=0 cellspacing=3 cellpadding=0 height="8" >
+  <tr> 
+    <td NOWRAP height="2"><b><font color="#CCFFFF"><font size=+1>【デバイスドライバのインストール】</font></font></b></td>
+  </tr>
+</table>
+<table border=0 cellspacing=3 cellpadding=0 height="8" >
+  <tr> 
+    <td NOWRAP height="2"> 
+      <pre>　次に、パソコンとP/ECEを結ぶ、「デバイスドライバ」をインストールします。
+
+　P/ECEとパソコンをUSBケーブルを使って接続します。
+　・P/ECE側のUSBコネクタは角型ですので注意してください。
+　・（通常状態（非スリープ）もしくは、電池を抜いた状態で接続してください）
+
+　接続すると「新しいハードウェアの追加」ウィザードが表示されます。
+　「次へ＞」ボタンをクリックして「使用中のデバイスに最適なドライバを検索する（推奨）」
+　にチェックが入っていることを確認し、「次へ＞」ボタンをクリックします。
+　「検索場所の指定」にチェックを入れて「参照」ボタンをクリックします。
+
+　Windows98の場合
+　　（標準の場所にインストールした場合）
+　　 <b>c:\usr\piece\drivers\win98</b>を指定します。
+　　 インストールされるとPIECE mobile equipment(W2k)と名前が表示されます。
+
+　Windows2000,Me,XPの場合
+　　（標準の場所にインストールした場合）
+　　 <b>c:\usr\piece\drivers\winxp</b>を指定します。
+　　 インストールされるとPIECE mobile equipmentと名前が表示されます。
+
+　　そこに拡張子が「.inf」のファイルがあるので、選択して「開く」ボタンをクリックします。
+　　指示に従って「次へ＞」ボタンをクリックしていきます。
+　　最後に、デバイスドライバのアップグレードウィザードの完了画面が出ます。
+　　デバイスドライバのインストールが完了しました。
+　　これでパソコンがP/ECEを認識できるようになりました。</pre>
+    </td>
+  </tr>
+</table>
+<hr width="600" align="left">
+<table border=0 cellspacing=3 cellpadding=0 height="8" >
+  <tr> 
+    <td NOWRAP height="2"><b><font color="#CCFFFF"><font size=+1>【システムのインストール】</font></font></b></td>
+  </tr>
+</table>
+<table border=0 cellspacing=3 cellpadding=0 height="135" >
+  <tr> 
+    <td NOWRAP height="2"> 
+      <pre>　最初、P/ECEにはシステムが入っていません。
+　必ずパソコンからシステムをインストールして下さい。
+　<b>
+　※ご注意※
+　システムのインストールに失敗すると、P/ECEが起動しない恐れがあります。
+　以下の注意事項を必ず守ってください。</b>
+　
+　・新品の電池をP/ECEにセットしてください。
+　・途中で『絶対に』ケーブルを抜いたり、リセットをかけたりしないでください。
+　・USBハブの一部の機種におきましては、電源供給の不安定な機種があります。
+　　USBハブを接続していて、P/ECEの認識等に問題がある場合は、
+　　パソコンのUSBポートに直接接続してください。
+
+　・スタートメニューの「PIECE」から、<b>「P/ECEコミュニケータ」（WinIsd）</b>を<BR>　　起動します。
+　・画面の右側に、「ｼｽﾃﾑ ｱｯﾌﾟﾃﾞｰﾄ」ボタンがあるので、クリックします。
+　・自動的にシステムの更新が始まります。
+　・完了すると、P/ECEが自動的に再起動します。
+
+　システムをインストールした初期状態では以下のアプリケーションが入っています。
+　　USB-GamePad … P/ECEをPC用ゲームパッドとして使うためのソフトです。
+　　DateAjust   … 日付と時間を設定できます。</pre>
+    </td>
+  </tr>
+</table>
+<HR width="600" align="left">
+<TABLE border="0" cellspacing="3" cellpadding="0" height="8">
+  <TBODY>
+    <TR>
+      <TD nowrap height="2"><B><FONT color="#CCFFFF"><FONT size="+1">【システムの復旧】</FONT></FONT></B></TD>
+    </TR>
+  </TBODY>
+</TABLE>
+<TABLE border="0" cellspacing="3" cellpadding="0" height="135">
+  <TBODY>
+    <TR>
+      <TD nowrap height="2">
+      <PRE>通常、上記のWinIsdを使って、P/ECEへのシステムインストールを行いますが、
+この方法を用いてもインストールが出来なかった場合は、以下の方法でもイン
+ストールをする事が可能です。
+</PRE><OL>
+        <LI>エクスプローラにて、インストールフォルダの下のbinフォルダに移動します。
+        <BR>binフォルダの中にwinpku.exeがあるので起動します。
+        
+        <LI>左側のウィンドゥで、ステータスが通信可能である事を確認して、アップデート<BR>ボタンを押して、P/ECE上の画面を表示に従います。
+        <LI>画面が反応しなくても、しばらく（２分程度）はリセットなどを行わないで下さい。
+      </OL>
+      <PRE>
+左側のウィンドゥにステータスの表示が無い場合再度、P/ECEをUSBポートに
+接続のやり直しを試みます。その状態で、接続しても P/ECE上の画面に表示
+が無い場合は以下の手順を行う必要があります。</PRE>
+      <OL>
+        <LI>P/ECEの<FONT color="#ffff00">SELECTボタンと十字キーの↓方向を押下したまま、背面のリセット<BR>
+        ボタンを押し</FONT>ます。必ず２つのキーを押した状態でリセットして下さい。この時<BR>P/ECE上の画面には何も表示されません。
+        <LI>ここで、「新しいハードウェアの追加」ウィザードが表示された場合、デバイスド<BR>
+        ライバのインストール方法の指示に従ってUSBドライバをインストールします。<BR><LI>「最新の情報に更新ボタン」をクリックします。ここでステータスが通信可能に<BR>
+        なっていない場合、1.の手順が正しく行われていない可能性がありますので、<BR>P/ECEを再度接続しなおして、数回試して下さい。
+        <LI>アップデートボタンを押して、P/ECE上の画面を表示に従います。
+      </OL>
+      </TD>
+    </TR>
+  </TBODY>
+</TABLE>
+<TABLE>
+  <TBODY>
+    <TR>
+      <TD nowrap height="2"><B><FONT color="#CCFFFF"><FONT size="+1">【トラブルシューティング】</FONT></FONT></B></TD>
+    </TR>
+  </TBODY>
+</TABLE>
+<TABLE>
+  <TBODY>
+    <TR>
+      <TD nowrap height="2"><BR>
+      ▼電源 <BR>
+      Ｑ．P/ECEをセルフパワーのUSBハブに繋いで、ハブのアダプターをコンセントに指している<BR>
+      　　時には、ハブをACアダプター代わりに電源を取れるのでしょか?　
+      <BR>
+      <BR>
+      Ａ．はい。セルフパワー・USBハブ単体からの給電で電源を取れます。
+      <BR>
+      <BR>
+      Ｑ．連続駆動時間はどれぐらいですか？　 <BR>
+      <BR>
+      Ａ．だいたい８時間と予測されますが、ソフトによって変わります。再生音の音質を良くしたり、<BR>
+      　　画面描画処理を複雑にすると駆動時間は短縮され、その逆やスタンバイモードを併用す<BR>
+      　　ると駆動時間は長くなります。 <BR>
+      <BR>
+      Ｑ．充電式の電池でも稼動するのでしょうか？　
+      <BR>
+      <BR>
+      Ａ．稼働はするかもしれませんが、動作保証外です。通常の単三電池をお使いください。（ア<BR>
+      　　ルカリ電池推奨） <BR>
+      <BR>
+      Ｑ．電池交換時にSRAM内容は保持されますか？　
+      <BR>
+      <BR>
+      Ａ．SRAMはプログラムの実行エリアとして捕らえていますので、内容の保持は行いません。<BR>
+      　　データの保存は全てフラッシュメモリで行います。
+      <BR>
+      <BR>
+      Ｑ．主電源はどうなっているのでしょうか？　
+      <BR>
+      <BR>
+      Ａ．主電源のＯＮ・ＯＦＦはありません。しばらくすればスタンバイモードに切り替わるようになっ<BR>
+      　　ています。補足ですが、ＵＳＢケーブルでパソコンと繋がっている時はＵＳＢ側から電源をと<BR>
+      　　るため、電池は消費しないようになっています。
+      <BR>
+      <BR>
+      ▼仕様 <BR>
+      Ｑ．フラッシュメモリ等のメモリ増設はできないのですか？　
+      <BR>
+      <BR>
+      Ａ．基本的には出来ません。物理的な改造を行えば出来ない事はないですが、動作保証外と<BR>
+      　　なります。 <BR>
+      <BR>
+      <BR>
+      </TD>
+    </TR>
+  </TBODY>
+</TABLE>
+<hr width="640" align="left">
+<table border=0 cellspacing=3 cellpadding=0 width="100%" height="8" >
+  <tr> 
+    <td NOWRAP height="2"><b><font color="#CCFFFF"><font size=+1>【基本操作】</font></font></b></td>
+  </tr>
+</table>
+<table border=0 cellspacing=3 cellpadding=0 width="100%" height="135" >
+  <tr> 
+    <td NOWRAP height="2"> 
+      <pre>　P/ECEは、単3電池1本で単体で使用することも、
+　パソコンと接続してUSB給電により使用することも可能です。
+　（この場合、電池が入っていなくてもかまいません）
+
+　アプリケーションの起動はファイルメニューから行います。
+　（パソコンと接続している時には、<a href="../docs/TOOLS/WinIsd.htm" target="_self">「P/ECEコミュニケータ」（WinIsd）</a>にて、
+　パソコン上の実行ファイルを直接起動することも可能です）
+
+　アプリケーション起動中でも、
+　「SELECTボタンを押しながらSTARTボタンを0.5秒間押し続ける」ことにより
+　必ずファイルメニューに移行します。
+
+　ファイルメニュー、またはアプリケーションから、
+　「STARTボタンを3秒間押し続ける」ことによりシステムメニューへ移行します。
+
+　システムメニューでは、以下の項目が設定できます。
+　操作は、パッドの上下で項目を選択し、左右で値を調整します。
+　「電源OFF」「アプリに戻る」は、ボタンを押すと即座に実行されます。
+　※USB接続中に電源OFFを実行しても、即座に電源が入ります。
+　※Bボタンでもアプリケーションに戻ります。
+
+　電源を切った後「STARTボタンを１秒以上押してから離す」と、再び電源が入ります。
+　<b>※この操作はVer.1.01と変わっていますので注意してください。</b>
+　電源を切った際に動作中のアプリケーションがあった場合は、続きの状態から再開されます。
+
+<b>　電源ＯＦＦ</b>
+<b>　音量　　　　</b>：0～9
+<b>　コントラスト</b>：0～38
+<b>　電池残量表示</b>：ON/OFF
+<b>　アプリに戻る</b>
+
+　※ご注意※
+　・各種システム項目は電池が切れると初期値に戻ります。
+　・戻したくない場合には、USBケーブルでパソコンにつないだ状態で電池を交換してください。
+　・電池マークの数字は電池からの供給電圧です。
+　・1.50前後～0.80前後が駆動可能で、1.00前後を切ると不安定になりますので、早めの
+　　電池交換をお勧めします
+　・電池が切れる前に、数十秒以内で新しい電池と交換すると時計の設定は保持されます。
+
+　P/ECEへアプリケーションを登録する時は、USBケーブルを使って
+　パソコンから専用ソフト「WinIsd」を使って登録します。
+　使用法は<a href="../docs/TOOLS/WinIsd.htm">「WinIsd」のマニュアル</a>ご覧ください。</pre>
+    </td>
+  </tr>
+</table>
+<hr width="100%">
+<table border=0 cellspacing=3 cellpadding=0 width="100%" height="8" >
+  <tr> 
+    <td NOWRAP height="2"><b><font color="#CCFFFF"><font size=+1>【アプリケーションマニュアル】</font></font></b></td>
+  </tr>
+</table>
+<table border=0 cellspacing=3 cellpadding=0 width="100%" height="21" >
+  <tr> 
+    <td NOWRAP height="29"> 
+      <pre>　P/ECEに同梱のアプリケーションのマニュアルです。（リンクをクリックしてください）
+
+　・<a href="../docs/APPLICATION/picket.html" target="_self">『<b>Picket</b>』</a>&nbsp;&nbsp;&nbsp;&nbsp; 　・・・Windowsと連携した、スケジュール、住所録管理（PIM）ソフトです
+</pre>
+    </td>
+  </tr>
+</table>
+<hr width="100%">
+<table border=0 cellspacing=3 cellpadding=0 width="100%" height="8" >
+  <tr> 
+    <td NOWRAP height="2"><b><font color="#CCFFFF"><font size=+1>【Ｃコンパイラ】</font></font></b></td>
+  </tr>
+</table>
+<table border=0 cellspacing=3 cellpadding=0 width="100%" height="21" >
+  <tr> 
+    <td NOWRAP height="29"> 
+      <pre>　標準的なコマンドベースのCコンパイラです。
+　pcc33コマンドにて、コンパイルからオブジェクト生成までこれ一つで行えます。
+　実際の開発手順は、<a href="tutorial_f.htm" target="_top">TUTORIAL</a>をご参照ください。
+
+　開発環境は、インストールした時に組み込まれています
+
+　※ご注意※
+　・このコンパイラについて、EPSONへの問い合わせは一切行わないでください。
+　・このパッケージはこの状態のまま（AS IS）提供されるものであり、本ソフトアェア
+　　の如何なる障害も修正の義務を負いません。
+　・このソフトウェアを使用した際の一切の不具合に関しては、当方は責任を持ちません。
+　・本ソフトウェアは個人的な使用を前提としており、市販製品に応用される場合の保証は、
+　　アプリケーションの開発・販売者の責任で使用してください。
+　・医療系用途への使用を禁止します。
+
+　以上をご了解の上で、各自の責任で使用してください。
+
+　・<a href="../docs/datasheet/EPSON/S5U1C33000C_J.pdf" target="_new">Cコンパイラパッケージのマニュアル
+
+</a>　P/ECE独自のAPI関数/構造体のAPIは、<a href="../docs/API/index.html" target="_new">APIリファレンス</a>をご参照ください。
+</pre>
+    </td>
+  </tr>
+</table>
+<hr width="100%">
+<table border=0 cellspacing=3 cellpadding=0 width="100%" height="8" >
+  <tr> 
+    <td NOWRAP height="2"><b><font color="#CCFFFF"><font size=+1>【ツールマニュアル】</font></font></b></td>
+  </tr>
+</table>
+<table border=0 cellspacing=3 cellpadding=0 width="100%" height="21" >
+  <tr> 
+    <td NOWRAP height="52"> 
+      <pre>　P/ECE用開発ツールのマニュアルです。（リンクをクリックしてください）
+
+　・<a href="../docs/TOOLS/WinIsd.htm" target="_self">『<b>WinIsd</b>』</a>　　・・・P/ECE⇔パソコン間通信のソフトウェア
+
+　・<a href="../docs/TOOLS/pBMPcnv.htm" target="_self">『<b>pBMPcnv</b>』</a>&nbsp; ・・・BMPをP/ECE用フォーマットに変換するソフトウェア
+
+　・<a href="../docs/TOOLS/pPCMcnv.htm" target="_self">『<b>pPCMcnv</b>』</a>&nbsp; ・・・PCMをP/ECE用フォーマットに変換するソフトウェア
+
+　・<A href="../docs/TOOLS/FilePack.htm" target="_self">『<B>FilePack</B>』</A> ・・・たくさんのファイルを一つにまとめるソフトウェア
+
+　・<A href="../docs/TOOLS/winmucc.htm" target="_self">『<B>winmucc</B>』</A>  ・・・Windows上での再生ができる、音楽コンバータ。
+
+</pre>
+    </td>
+  </tr>
+</table>
+<table border=0 cellspacing=3 cellpadding=0 width="100%" height="8" >
+  <tr> 
+    <td NOWRAP height="2"><b><font color="#FFFF66"><font size="+1" color="#CCFFFF">【フラッシュメモリについて】</font></font><font color="#CCFFFF"></font></b></td>
+  </tr>
+</table>
+<table border=0 cellspacing=3 cellpadding=0 width="100%" height="21" >
+  <tr> 
+    <td NOWRAP height="2"> 
+      <pre>　フラッシュメモリの書き換え可能回数は平均10万回程度が目安です。
+　フラッシュメモリの寿命による不具合に関しては、保証の範囲外になります。</pre>
+    </td>
+  </tr>
+</table>
+<hr width="100%">
+</body>
+</html>

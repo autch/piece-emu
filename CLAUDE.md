@@ -19,6 +19,18 @@ This repository contains four interconnected sub-projects for the **Aquaplus P/E
 - **`piece-toolchain-llvm/CLAUDE.md`** — **Read this before working on the LLVM backend.** Contains critical facts about ext immediate signedness, ABI, common pitfalls, and coding conventions.
 - **`piece-toolchain-llvm/docs/errata.md`** — CPU hardware bugs, compiler bugs, known C library bugs.
 
+### New Emulator — Peripheral & Kernel References
+
+When working on `src/` peripherals or kernel boot behaviour, consult these **before** reading raw source files:
+
+- **`docs/peripheral-implementation-status.md`** — Authoritative status of all implemented peripherals (P1 phase). Covers register maps, known design pitfalls (`bus.write16` byte order, ISR clear semantics, T8 PSET timing), and the next-step roadmap (P2: SIF3, HSDMA, LCD frontend, RTC).
+- **`docs/kernel-source-reference.md`** — Distilled guide to `sdk/sysdev/pcekn/`. Contains: boot sequence, key register values set by InitHard/InitTimer/GetSysClock, ISR clear method, button bit layout, LCD/SIF3/HSDMA access patterns, and "traps for the emulator" (e.g. GetSysClock RTC hang, D-button wait). **Read this instead of the raw kernel .c files** whenever possible — the kernel sources are large and context-expensive.
+- **`docs/piece-cd/`** — P/ECE SDK HTML documentation (hardware interrupt/port assignment tables, button wiring). Useful for verifying interrupt vector numbers and GPIO signal names. Key files:
+  - `PIECE ハードウエア割り込み.html` — Full interrupt vector table with BIOS usage
+  - `PIECE ポート解説.html` — K/P port physical wiring (K5/K6 button mapping)
+
+`sdk/sysdev/pcekn/` (read-only) is the actual kernel source. Read individual `.c` files only when `docs/kernel-source-reference.md` does not cover the detail needed.
+
 ## Build Commands (piece-toolchain-llvm)
 
 All commands run from the **repository root**:
@@ -138,6 +150,7 @@ Pattern: `crt0.s` sets SP via `ext 0x80` / `ld.w %r0, 0` / `ld.w %sp, %r0`, then
 - Code, comments in top-level, `src/` and commit messages: **English only**.
 - `docs/`: Japanese allowed (reference documents).
 - Do not modify any files under `piece-toolchain-llvm/`, `mame/`, `piemu/` — reference material only.
+- Do not modify any files under `sdk/` — shared with other projects, treat as read-only reference. Kernel source is at `sdk/sysdev/pcekn/`.
 
 ## S1C33000 CPU Critical Facts
 

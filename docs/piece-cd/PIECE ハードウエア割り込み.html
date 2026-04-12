@@ -1,0 +1,585 @@
+<!doctype html public "-//w3c//dtd html 4.0 transitional//en">
+<html>
+<head>
+   <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+   <meta name="Author" content="sei">
+   <meta name="GENERATOR" content="Mozilla/4.73 [ja] (Windows NT 5.0; U) [Netscape]">
+   <title>PIECE ハードウエア割り込み/周辺機能 使用状況</title>
+</head>
+<body text="#000000" bgcolor="#FFFFCC" link="#0000EE" vlink="#551A8B" alink="#FF0000">
+
+<h4>
+■PIECE ハードウエア割り込み/周辺機能 使用状況 (BIOS ver1.12)</h4>
+
+<table BORDER WIDTH="99%" >
+<tr>
+<th><font size=-1>ベクタ番号</font></th>
+
+<th><font size=-1>周辺機能</font></th>
+
+<th><font size=-1>要因</font></th>
+
+<th><font size=-1>使用</font></th>
+
+<th><font size=-1>レベル</font></th>
+
+<th><font size=-1>備考</font></th>
+</tr>
+
+<tr BGCOLOR="#FFCC00">
+<td><b><font size=-1>7(0x07)</font></b></td>
+
+<td><font size=-1>NMI</font></td>
+
+<td><font size=-1>ウォッチドッグ</font></td>
+
+<td><font size=-1>○</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>1msタイマのカウント専用</font></td>
+</tr>
+
+<tr>
+<td><b><font size=-1>16(0x10)</font></b></td>
+
+<td><font size=-1>ポート入力割り込み0</font></td>
+
+<td><font size=-1>エッジorレベル</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+</tr>
+
+<tr BGCOLOR="#FFCC33">
+<td><b><font size=-1>17(0x11)</font></b></td>
+
+<td><font size=-1>ポート入力割り込み1</font></td>
+
+<td><font size=-1>エッジorレベル</font></td>
+
+<td><font size=-1>○</font></td>
+
+<td><font size=-1>6</font></td>
+
+<td><font size=-1>USB INT_N</font></td>
+</tr>
+
+<tr BGCOLOR="#FFCC33">
+<td><b><font size=-1>18(0x12)</font></b></td>
+
+<td><font size=-1>ポート入力割り込み2</font></td>
+
+<td><font size=-1>エッジorレベル</font></td>
+
+<td><font size=-1>○</font></td>
+
+<td><font size=-1>7</font></td>
+
+<td><font size=-1>赤外線受信</font></td>
+</tr>
+
+<tr>
+<td><b><font size=-1>19(0x13)</font></b></td>
+
+<td><font size=-1>ポート入力割り込み3</font></td>
+
+<td><font size=-1>エッジorレベル</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+</tr>
+
+<tr BGCOLOR="#FFCC33">
+<td><b><font size=-1>20(0x14)</font></b></td>
+
+<td><font size=-1>キー入力割り込み0</font></td>
+
+<td><font size=-1>エッジ</font></td>
+
+<td><font size=-1>○</font></td>
+
+<td><font size=-1>4</font></td>
+
+<td><font size=-1>スタンバイ解除</font></td>
+</tr>
+
+<tr>
+<td><b><font size=-1>21(0x15)</font></b></td>
+
+<td><font size=-1>キー入力割り込み1</font></td>
+
+<td><font size=-1>エッジ</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+</tr>
+
+<tr BGCOLOR="#FFFF00">
+<td><b><font size=-1>22(0x16)</font></b></td>
+
+<td><font size=-1>高速DMA Ch.0</font></td>
+
+<td><font size=-1>転送終了</font></td>
+
+<td><font size=-1>△</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>LCD転送</font></td>
+</tr>
+
+<tr BGCOLOR="#FFCC00">
+<td><b><font size=-1>23(0x17)</font></b></td>
+
+<td><font size=-1>高速DMA Ch.1</font></td>
+
+<td><font size=-1>転送終了</font></td>
+
+<td><font size=-1>○</font></td>
+
+<td><font size=-1>7/5</font></td>
+
+<td><font size=-1>サウンド再生(PWM値転送)</font></td>
+</tr>
+
+<tr>
+<td><b><font size=-1>24(0x18)</font></b></td>
+
+<td><font size=-1>高速DMA Ch.2</font></td>
+
+<td><font size=-1>転送終了</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+</tr>
+
+<tr>
+<td><b><font size=-1>25(0x19)</font></b></td>
+
+<td><font size=-1>高速DMA Ch.3</font></td>
+
+<td><font size=-1>転送終了</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+</tr>
+
+<tr>
+<td><b><font size=-1>26(0x1A)</font></b></td>
+
+<td><font size=-1>インテリジェントDMA</font></td>
+
+<td><font size=-1>転送終了</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+</tr>
+
+<tr BGCOLOR="#FFCC33">
+<td><b><font size=-1>30(0x1E)</font></b>
+<br><b><font size=-1>31(0x1F)</font></b></td>
+
+<td><font size=-1>16ビットプログラマブルタイマ0</font></td>
+
+<td><font size=-1>コンペアB (NMI)</font>
+<br><font size=-1>コンペアA</font></td>
+
+<td><font size=-1>○</font>
+<br><font size=-1>－</font></td>
+
+<td><font size=-1>6</font></td>
+
+<td><font size=-1>1msタイマ</font></td>
+</tr>
+
+<tr BGCOLOR="#FFFF00">
+<td><b><font size=-1>34(0x22)</font></b>
+<br><b><font size=-1>35(0x23)</font></b></td>
+
+<td><font size=-1>16ビットプログラマブルタイマ1</font></td>
+
+<td><font size=-1>コンペアB</font>
+<br><font size=-1>コンペアA</font></td>
+
+<td><font size=-1>△</font>
+<br><font size=-1>△</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>サウンド再生(PWM)</font></td>
+</tr>
+
+<tr>
+<td><b><font size=-1>38(0x26)</font></b>
+<br><b><font size=-1>39(0x27)</font></b></td>
+
+<td><font size=-1>16ビットプログラマブルタイマ2</font></td>
+
+<td><font size=-1>コンペアB</font>
+<br><font size=-1>コンペアA</font></td>
+
+<td><font size=-1>－</font>
+<br><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>サウンド再生(予備)</font></td>
+</tr>
+
+<tr>
+<td><b><font size=-1>42(0x2A)</font></b>
+<br><b><font size=-1>43(0x2B)</font></b></td>
+
+<td><font size=-1>16ビットプログラマブルタイマ3</font></td>
+
+<td><font size=-1>コンペアB</font>
+<br><font size=-1>コンペアA</font></td>
+
+<td><font size=-1>－</font>
+<br><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+</tr>
+
+<tr BGCOLOR="#FFFF00">
+<td><b><font size=-1>46(0x2E)</font></b>
+<br><b><font size=-1>47(0x2F)</font></b></td>
+
+<td><font size=-1>16ビットプログラマブルタイマ4</font></td>
+
+<td><font size=-1>コンペアB</font>
+<br><font size=-1>コンペアA</font></td>
+
+<td><font size=-1>△</font>
+<br><font size=-1>△</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>USB 6MHz</font></td>
+</tr>
+
+<tr BGCOLOR="#FFCC33">
+<td><b><font size=-1>50(0x32)</font></b>
+<br><b><font size=-1>51(0x33)</font></b></td>
+
+<td><font size=-1>16ビットプログラマブルタイマ5</font></td>
+
+<td><font size=-1>コンペアB</font>
+<br><font size=-1>コンペアA</font></td>
+
+<td><font size=-1>△</font>
+<br><font size=-1>○</font></td>
+
+<td><font size=-1>7</font></td>
+
+<td><font size=-1>赤外線送信</font></td>
+</tr>
+
+<tr BGCOLOR="#FFFF00">
+<td><b><font size=-1>52(0x34)</font></b></td>
+
+<td><font size=-1>8ビットプログラマブルタイマ0</font></td>
+
+<td><font size=-1>アンダーフロー</font></td>
+
+<td><font size=-1>△</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>スタンバイ解除</font></td>
+</tr>
+
+<tr>
+<td><b><font size=-1>53(0x35)</font></b></td>
+
+<td><font size=-1>8ビットプログラマブルタイマ1</font></td>
+
+<td><font size=-1>アンダーフロー</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+</tr>
+
+<tr>
+<td><b><font size=-1>54(0x36)</font></b></td>
+
+<td><font size=-1>8ビットプログラマブルタイマ2</font></td>
+
+<td><font size=-1>アンダーフロー</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+</tr>
+
+<tr>
+<td><b><font size=-1>55(0x37)</font></b></td>
+
+<td><font size=-1>8ビットプログラマブルタイマ3</font></td>
+
+<td><font size=-1>アンダーフロー</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>EXT端子用</font></td>
+</tr>
+
+<tr>
+<td><b><font size=-1>56(0x38)</font></b>
+<br><b><font size=-1>57(0x39)</font></b>
+<br><b><font size=-1>58(0x3A)</font></b></td>
+
+<td><font size=-1>シリアルインターフェースCh.0</font></td>
+
+<td><font size=-1>受信エラー</font>
+<br><font size=-1>受信バッファフル</font>
+<br><font size=-1>送信バッファエンプティ</font></td>
+
+<td><font size=-1>－</font>
+<br><font size=-1>－</font>
+<br><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+</tr>
+
+<tr>
+<td><b><font size=-1>60(0x3C)</font></b>
+<br><b><font size=-1>61(0x3D)</font></b>
+<br><b><font size=-1>62(0x3E)</font></b></td>
+
+<td><font size=-1>シリアルインターフェースCh.1</font></td>
+
+<td><font size=-1>受信エラー</font>
+<br><font size=-1>受信バッファフル</font>
+<br><font size=-1>送信バッファエンプティ</font></td>
+
+<td><font size=-1>－</font>
+<br><font size=-1>－</font>
+<br><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>EXT端子用</font></td>
+</tr>
+
+<tr BGCOLOR="#FFFF00">
+<td><b><font size=-1>64(0x40)</font></b></td>
+
+<td><font size=-1>A/D変換器</font></td>
+
+<td><font size=-1>変換完了</font></td>
+
+<td><font size=-1>△</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>K66,67電圧測定</font></td>
+</tr>
+
+<tr BGCOLOR="#FFCC33">
+<td><b><font size=-1>65(0x41)</font></b></td>
+
+<td><font size=-1>計時タイマ</font></td>
+
+<td><font size=-1>各種</font></td>
+
+<td><font size=-1>○</font></td>
+
+<td><font size=-1>4</font></td>
+
+<td><font size=-1>アラーム</font></td>
+</tr>
+
+<tr>
+<td><b><font size=-1>68(0x44)</font></b></td>
+
+<td><font size=-1>ポート入力割り込み4</font></td>
+
+<td><font size=-1>エッジorレベル</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+</tr>
+
+<tr>
+<td><b><font size=-1>69(0x45)</font></b></td>
+
+<td><font size=-1>ポート入力割り込み5</font></td>
+
+<td><font size=-1>エッジorレベル</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+</tr>
+
+<tr>
+<td><b><font size=-1>70(0x46)</font></b></td>
+
+<td><font size=-1>ポート入力割り込み6</font></td>
+
+<td><font size=-1>エッジorレベル</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+</tr>
+
+<tr>
+<td><b><font size=-1>71(0x47)</font></b></td>
+
+<td><font size=-1>ポート入力割り込み7</font></td>
+
+<td><font size=-1>エッジorレベル</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+</tr>
+
+<tr>
+<td></td>
+
+<td></td>
+
+<td></td>
+
+<td></td>
+
+<td></td>
+
+<td></td>
+</tr>
+
+<tr>
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>8ビットプログラマブルタイマ4</font></td>
+
+<td><font size=-1>アンダーフロー</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+</tr>
+
+<tr BGCOLOR="#FFFF00">
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>8ビットプログラマブルタイマ5</font></td>
+
+<td><font size=-1>アンダーフロー</font></td>
+
+<td><font size=-1>△</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>LCD転送</font></td>
+</tr>
+
+<tr>
+<td><font size=-1>－</font>
+<br><font size=-1>－</font>
+<br><font size=-1>－</font></td>
+
+<td><font size=-1>シリアルインターフェースCh.2</font></td>
+
+<td><font size=-1>受信エラー</font>
+<br><font size=-1>受信バッファフル</font>
+<br><font size=-1>送信バッファエンプティ</font></td>
+
+<td><font size=-1>－</font>
+<br><font size=-1>－</font>
+<br><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>－</font></td>
+</tr>
+
+<tr BGCOLOR="#FFFF00">
+<td><font size=-1>－</font>
+<br><font size=-1>－</font>
+<br><font size=-1>－</font></td>
+
+<td><font size=-1>シリアルインターフェースCh.3</font></td>
+
+<td><font size=-1>受信エラー</font>
+<br><font size=-1>受信バッファフル</font>
+<br><font size=-1>送信バッファエンプティ</font></td>
+
+<td><font size=-1>－</font>
+<br><font size=-1>－</font>
+<br><font size=-1>△</font></td>
+
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>LCD転送</font></td>
+</tr>
+</table>
+
+<table BORDER WIDTH="30%" >
+<tr BGCOLOR="#FFCC33">
+<td><font size=-1>○</font></td>
+
+<td><font size=-1>割り込み/周辺機能使用</font></td>
+</tr>
+
+<tr BGCOLOR="#FFFF00">
+<td><font size=-1>△</font></td>
+
+<td><font size=-1>割り込みは使用してないが、周辺機能は使用</font></td>
+</tr>
+
+<tr>
+<td><font size=-1>－</font></td>
+
+<td><font size=-1>未使用</font></td>
+</tr>
+</table>
+
+<p><font size=-1><b>※</b>未使用の割り込み/周辺機能はユーザアプリケーションで使用可能ですが、ハードウエアの制約上実際にすべてが使用できるとは限りません。</font>
+<br><font size=-1><b>※</b>未使用の割り込み/周辺機能も将来のバージョンアップでカーネルが使用する可能性があります。</font>
+</body>
+</html>
