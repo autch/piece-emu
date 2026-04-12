@@ -32,6 +32,13 @@ add_library(piece_core STATIC
     elf_loader.cpp
     semihosting.cpp
     gdb_rsp.cpp
+    peripheral_intc.cpp
+    peripheral_clkctl.cpp
+    peripheral_t8.cpp
+    peripheral_t16.cpp
+    peripheral_portctrl.cpp
+    peripheral_bcu_area.cpp
+    peripheral_wdt.cpp
 )
 
 target_include_directories(piece_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -58,6 +65,10 @@ if(GTest_FOUND)
         tests/unit/test_disasm.cpp
         tests/unit/test_bcu.cpp
         tests/unit/test_cpu_instructions.cpp
+        tests/unit/test_peripheral_intc.cpp
+        tests/unit/test_peripheral_t8.cpp
+        tests/unit/test_peripheral_t16.cpp
+        tests/unit/test_peripheral_portctrl.cpp
     )
 
     target_link_libraries(piece_unit_tests PRIVATE piece_core GTest::gtest_main)

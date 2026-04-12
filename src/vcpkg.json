@@ -8,12 +8,12 @@
   ],
   "features": {
     "system": {
-      "description": "Full-system frontend with display and audio (requires SDL2 and Dear ImGui)",
+      "description": "Full-system frontend with display and audio (requires SDL3 and Dear ImGui)",
       "dependencies": [
-        "sdl2",
+        "sdl3",
         {
           "name": "imgui",
-          "features": ["sdl2-binding", "sdl2-renderer-binding"]
+          "features": ["sdl3-binding", "sdl3-renderer-binding"]
         }
       ]
     }

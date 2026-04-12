@@ -92,6 +92,11 @@ struct CpuState {
     // Used to warn about SP-modifying instructions in call.d/ret.d delay slots.
     // 0 = other (jp.d, jr**.d), 1 = ret.d, 2 = call.d
     uint8_t delay_caller = 0;
+
+    // Trap Table Base Register — set by BcuAreaCtrl when BCU TTBR is written.
+    // In P/ECE the kernel sets this to 0x400 (TPVECTORTOP).
+    // Trap vector N is at address: ttbr + N * 4.
+    uint32_t ttbr = 0x400;
 };
 
 // ============================================================================

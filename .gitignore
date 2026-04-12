@@ -3,6 +3,7 @@ docs/for-llvm/
 mame/
 piemu/
 piece-toolchain-llvm/
+sdk/
 
 CMakeLists.txt.user
 CMakeCache.txt

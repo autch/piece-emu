@@ -78,8 +78,6 @@ void Cpu::h_undef(Cpu& cpu, uint16_t insn) {
 // Trap
 // ============================================================================
 
-static constexpr uint32_t TRAP_TABLE_BASE = 0x400;
-
 void Cpu::assert_trap(int no, int level) {
     do_trap(no, level);
 }
@@ -89,7 +87,7 @@ void Cpu::do_trap(int no, int level) {
         if (!state.psr.ie()) return;
         if (static_cast<uint32_t>(level) <= state.psr.il()) return;
     }
-    uint32_t vec = bus_.read32(TRAP_TABLE_BASE + no * 4);
+    uint32_t vec = bus_.read32(state.ttbr + no * 4);
     state.sp -= 4;
     bus_.write32(state.sp, state.pc);
     state.sp -= 4;

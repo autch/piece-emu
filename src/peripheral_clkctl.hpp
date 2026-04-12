@@ -1,0 +1,83 @@
+#pragma once
+#include <cstdint>
+#include <functional>
+
+class Bus;
+
+// ============================================================================
+// ClockControl — S1C33209 clock/prescaler control registers
+//
+// Covered registers (all 1-byte at the listed addresses):
+//   0x040140  c_CLKSEL_T8_45   8-bit timer 4/5 clock selection
+//   0x040145  c_CLKCTL_T8_45   8-bit timer 4/5 clock control
+//   0x040146  c_CLKSEL_T8      8-bit timer 0-3 clock selection
+//   0x040147  c_CLKCTL_T16_0   16-bit timer 0 clock control
+//   0x040148  c_CLKCTL_T16_1
+//   0x040149  c_CLKCTL_T16_2
+//   0x04014A  c_CLKCTL_T16_3
+//   0x04014B  c_CLKCTL_T16_4
+//   0x04014C  c_CLKCTL_T16_5
+//   0x04014D  c_CLKCTL_T8_01   8-bit timer 0/1 clock control
+//   0x04014E  c_CLKCTL_T8_23   8-bit timer 2/3 clock control
+//   0x040180  rPWRCTL          Power control (CLKCHG=bit2, CLKDT[1:0]=bits7:6)
+//   0x040181  rCLKSEL          Prescaler clock select (PSCDT0=bit0)
+//
+// CLKCTL byte layout (c_CLKCTLtag):
+//   bits [2:0] TSA  — clock A division: n → divide by 2^(n+1)
+//   bit  [3]   TONA — clock A enable
+//   bits [6:4] TSB  — clock B division
+//   bit  [7]   TONB — clock B enable
+//
+// CLKSEL byte layout (c_CLKSELtag for T8):
+//   bit 0 — timer 0 (or 4) clock: 0=clock A, 1=clock B
+//   bit 1 — timer 1 (or 5) clock
+//   bit 2 — timer 2
+//   bit 3 — timer 3
+//
+// CPU clock (PWRCTL.CLKCHG):
+//   CLKCHG=0 → 48 MHz (OSC3 direct)
+//   CLKCHG=1 → 24 MHz (OSC3 / 2)
+// ============================================================================
+class ClockControl {
+public:
+    static constexpr uint32_t CPU_CLOCK_FAST = 48'000'000; // 48 MHz
+    static constexpr uint32_t CPU_CLOCK_NORM = 24'000'000; // 24 MHz (P/ECE default)
+
+    void attach(Bus& bus);
+
+    // Current CPU clock frequency in Hz.
+    uint32_t cpu_clock_hz() const;
+
+    // Input clock for 16-bit timer channel ch (0..5).
+    // Returns 0 if the selected clock source is disabled.
+    // cksl: 0 = clock A, 1 = clock B (from timer's own CTL.CKSL bit)
+    uint32_t t16_clock_hz(int ch, int cksl) const;
+
+    // Input clock for 8-bit timer channel ch (0..3).
+    // Clock source (A or B) is determined by CLKSEL_T8.
+    // Returns 0 if the selected clock source is disabled.
+    uint32_t t8_clock_hz(int ch) const;
+
+    // Called when CPU clock frequency changes (e.g. CLKCHG bit toggled).
+    std::function<void(uint32_t new_hz)> on_clock_change;
+
+    // Direct register access (for unit tests)
+    uint8_t pwrctl()          const { return pwrctl_; }
+    uint8_t clksel_t8()       const { return clksel_t8_; }
+    uint8_t clkctl_t16(int ch) const { return clkctl_t16_[ch]; }
+    uint8_t clkctl_t8_01()    const { return clkctl_t8_01_; }
+    uint8_t clkctl_t8_23()    const { return clkctl_t8_23_; }
+
+private:
+    uint8_t clksel_t8_    = 0;   // 0x040146
+    uint8_t clkctl_t16_[6] = {}; // 0x040147-0x04014C
+    uint8_t clkctl_t8_01_ = 0;   // 0x04014D
+    uint8_t clkctl_t8_23_ = 0;   // 0x04014E
+    uint8_t pwrctl_       = 0;   // 0x040180 (CLKCHG at bit 2)
+
+    // Compute timer clock from a CLKCTL byte, selecting clock A or B.
+    // base is the CPU clock. Returns 0 if clock is stopped.
+    uint32_t clock_from_clkctl(uint8_t clkctl, bool use_b, uint32_t base) const;
+
+    void write_single(uint32_t addr, uint8_t val);
+};

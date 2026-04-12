@@ -1,0 +1,414 @@
+# C33コアペリフェラル実装状況
+
+**最終更新**: 2026-04-11  
+**対象ディレクトリ**: `src/`  
+**ビルドコマンド**: `ninja -C build-src` / `ninja -C build-src test`
+
+---
+
+## 実装済み（P1フェーズ）
+
+### Step 1: ITickable インターフェース + TTBR 動的化
+
+**ファイル**: [src/tick.hpp](../src/tick.hpp)
+
+```cpp
+class ITickable {
+public:
+    virtual void tick(uint64_t cpu_cycles) = 0;
+    virtual ~ITickable() = default;
+};
+```
+
+サイクル駆動のペリフェラル（タイマ類）が共通で実装するインターフェース。`cpu_cycles` は単調増加するCPU総サイクル数。
+
+**ファイル**: [src/cpu.hpp](../src/cpu.hpp), [src/cpu_core.cpp](../src/cpu_core.cpp)
+
+`CpuState::ttbr` フィールドを追加し、`do_trap()` 内のトラップテーブルアドレスをハードコードから動的化した。
+
+```cpp
+// cpu.hpp に追加
+uint32_t ttbr = 0x400;  // Trap Table Base Register; P/ECE kernel sets 0x400
+```
+
+- デフォルト `0x400`: 既存のベアメタルテストに影響なし
+- BcuAreaCtrl が rTTBR 書き込み時に `cpu.state.ttbr` を更新する
+
+---
+
+### Step 2: 割り込みコントローラ (InterruptController)
+
+**ファイル**: [src/peripheral_intc.hpp](../src/peripheral_intc.hpp), [src/peripheral_intc.cpp](../src/peripheral_intc.cpp)
+
+**レジスタマップ**: 0x040260–0x04029F (64バイト)
+
+デバイスからの割り込み要求を受け取り、IEN・優先度チェックを経てCPUへ配送するハブ。
+
+```cpp
+// デバイスからの呼び出し
+intc.raise(InterruptController::IrqSource::T16_CRA0);
+```
+
+- ISRフラグ: IEN・優先度に関わらず常にセット（GDBからのレジスタ確認に有用）
+- IEN=0 または priority=0 の場合は assert_trap を呼ばない
+- rRESET.RSTONLY=0 (default, kernel sets bp[0x29f]=0x06): direct write — write-0-to-clear (same as kernel's `&= ~mask` pattern); writing 1 force-sets the flag
+- rRESET.RSTONLY=1: write-0-to-clear only — writing 1 has no effect (protected against software force-set)
+- IrqSource ↔ (trap_no, pri_byte, pri_shift, ien_byte, ien_bit, isr_byte, isr_bit) 変換テーブルを保持
+
+**実装済みソース**: 39種類
+
+| グループ | IrqSource | Trap番号 |
+|---------|-----------|---------|
+| ポート入力 | PORT0–PORT3 | 16–19 |
+| キー入力 | KEY0–KEY1 | 20–21 |
+| HSDMA | HSDMA0–HSDMA3 | 22–25 |
+| IDMA | IDMA | 26 |
+| 16bitタイマ | T16_CRB0/CRA0〜T16_CRB5/CRA5 | 30–51 |
+| 8bitタイマ | T8_UF0–T8_UF3 | 52–55 |
+| シリアル | SIF0_ERR/RX/TX, SIF1_ERR/RX/TX | 56–62 |
+| その他 | AD, CLK_TIMER | 64–65 |
+| ポート入力2 | PORT4–PORT7 | 68–71 |
+
+**ユニットテスト**: [src/tests/unit/test_peripheral_intc.cpp](../src/tests/unit/test_peripheral_intc.cpp) — 8テスト
+
+---
+
+### Step 3: クロック制御 (ClockControl)
+
+**ファイル**: [src/peripheral_clkctl.hpp](../src/peripheral_clkctl.hpp), [src/peripheral_clkctl.cpp](../src/peripheral_clkctl.cpp)
+
+**レジスタマップ**: 0x040146–0x04014E, 0x040180
+
+タイマの入力クロック周波数を計算するコンポーネント。タイマが `cycles_per_count()` を求める際に参照する。
+
+```
+CLKCTL.TSx[2:0] → 分周比 2^(TSx+1)
+CLKCTL.TONx     → クロック有効/無効
+PWRCTL.CLKCHG   → 0=48MHz(OSC3直結), 1=24MHz(OSC3/2)
+```
+
+- `cpu_clock_hz()`: PWRCTL から CPU クロックを返す
+- `t8_clock_hz(ch)`: CLKSEL_T8 + CLKCTL_T8_01/23 から T8 チャンネルのクロックを返す
+- `t16_clock_hz(ch, cksl)`: CLKCTL_T16_ch から T16 チャンネルのクロックを返す
+- `on_clock_change` コールバック: CLKCHG 変化時に通知（将来のフロントエンド用）
+
+---
+
+### Step 4: 8bitタイマ × 4 (Timer8bit)
+
+**ファイル**: [src/peripheral_t8.hpp](../src/peripheral_t8.hpp), [src/peripheral_t8.cpp](../src/peripheral_t8.cpp)
+
+**レジスタマップ**: 0x040160 + ch×4 (各4バイト、ch=0–3)
+
+| オフセット | レジスタ | 用途 |
+|-----------|---------|------|
+| +0 (lo) | rT8CTL | PTRUN[0], PSET[1], PTOUT[2] |
+| +1 (hi) | rRLD | リロード値 |
+| +2 (lo) | rPTD | カウンタ（読み取り専用） |
+| +3 (hi) | Dummy | — |
+
+- カウントダウン式: PTD が 0 からデクリメント → アンダーフロー → PTD=RLD + IRQ
+- PSET=1 書き込み: 即座に PTD=RLD（カウントは継続）
+- PTRUN=0: カウント停止
+- クロック停止 (TONA=0): カウント停止
+
+**ユニットテスト**: [src/tests/unit/test_peripheral_t8.cpp](../src/tests/unit/test_peripheral_t8.cpp) — 5テスト
+
+---
+
+### Step 5: 16bitタイマ × 6 (Timer16bit)
+
+**ファイル**: [src/peripheral_t16.hpp](../src/peripheral_t16.hpp), [src/peripheral_t16.cpp](../src/peripheral_t16.cpp)
+
+**レジスタマップ**: 0x048180 + ch×8 (各8バイト、ch=0–5)
+
+| オフセット | レジスタ | 用途 |
+|-----------|---------|------|
+| +0 | rCRA | 比較データA |
+| +2 | rCRB | 比較データB |
+| +4 | rTC | カウンタ（読み書き可） |
+| +6 (lo) | rT16CTL | 制御レジスタ |
+
+rT16CTL ビット: PRUN[0], PRESET[1], PTM[2], CKSL[3], OUTINV[4], SELCRB[5], SELFM[6]
+
+- カウントアップ式: TC==CRB → raise_crb（TCはリセットされない）、TC==CRA → raise_cra + TC=0（SELFM=0時）
+- PRESET=1 書き込み: TC=0 かつ next_tick_cycle_=0 にリセット（自己クリア）
+- P/ECE カーネルはチャンネル0 CRA で約1msタイマを構成する
+
+**ユニットテスト**: [src/tests/unit/test_peripheral_t16.cpp](../src/tests/unit/test_peripheral_t16.cpp) — 6テスト
+
+---
+
+### Step 6: ポートコントローラ (PortCtrl)
+
+**ファイル**: [src/peripheral_portctrl.hpp](../src/peripheral_portctrl.hpp), [src/peripheral_portctrl.cpp](../src/peripheral_portctrl.cpp)
+
+**レジスタマップ**:
+- K port: 0x0402C0–0x0402C4 (rCFK5, rK5D, Dummy, rCFK6, rK6D)
+- PINT: 0x0402C6–0x0402CF (ポート入力割り込み設定)
+- P port: 0x0402D0–0x0402DF (P0–P3 汎用GPIO)
+
+P/ECE ボタン配線:
+```
+K5[0]=UP, K5[1]=DOWN, K5[2]=LEFT, K5[3]=RIGHT, K5[4]=SELECT
+K6[0]=A,  K6[1]=B,   K6[2]=START
+```
+
+- `set_k5(bits)` / `set_k6(bits)`: フロントエンド（SDL）からの入力更新
+- K5D・K6D は CPU 書き込みを無視（入力専用）
+- KEY0/KEY1 割り込み: `(Kxd & ~SMPK) == (SCPK & ~SMPK)` 条件でトリガ（SPPK で K5/K6 を選択）
+
+**ユニットテスト**: [src/tests/unit/test_peripheral_portctrl.cpp](../src/tests/unit/test_peripheral_portctrl.cpp) — 10テスト
+
+---
+
+### Step 7: BCUエリア設定 (BcuAreaCtrl)
+
+**ファイル**: [src/peripheral_bcu_area.hpp](../src/peripheral_bcu_area.hpp), [src/peripheral_bcu_area.cpp](../src/peripheral_bcu_area.cpp)
+
+**レジスタマップ**: 0x048120–0x04813B
+
+- rA6_4 (0x04812A): A5WT[2:0] → `bus.sram_wait` を更新
+- rA10_9 (0x048126): A10WT[2:0] → `bus.flash_wait` を更新
+- rTTBR (0x048134 lo + 0x048136 hi): `cpu.state.ttbr` を更新
+- コールドスタートデフォルト: 全AxWT=7（最大ウェイト）
+
+---
+
+### Step 8: ウォッチドッグタイマ スタブ (WatchdogTimer)
+
+**ファイル**: [src/peripheral_wdt.hpp](../src/peripheral_wdt.hpp), [src/peripheral_wdt.cpp](../src/peripheral_wdt.cpp)
+
+**レジスタマップ**: 0x040170–0x040171 (rWRWD + rEWD)
+
+読み書きを吸収するだけのスタブ。P/ECE カーネルが WDT を有効化するが、エミュレータはリセット動作を行わない。
+
+---
+
+### Step 9: CMakeLists.txt + main.cpp 更新
+
+**ファイル**: [src/CMakeLists.txt](../src/CMakeLists.txt), [src/main.cpp](../src/main.cpp)
+
+`piece_core` に上記7ペリフェラルのコンパイル単位を追加。  
+`main.cpp` に以下を追加:
+- 全ペリフェラルのインスタンス化・`attach()` 呼び出し
+- CPU ステップ後に T8×4, T16×6 の `tick(total_cycles)` を呼ぶループ
+
+---
+
+## テスト結果
+
+```
+[==========] 136 tests from 10 test suites ran.
+[  PASSED  ] 136 tests.
+```
+
+| テストスイート | テスト数 | 内容 |
+|-------------|--------|------|
+| ExtImmFixture | 16 | EXT即値拡張 |
+| PsrFlags | 18 | PSRフラグ演算 |
+| ShiftDecode | 9 | シフトデコード |
+| DisasmFixture | 15 | 逆アセンブラ |
+| BcuFixture | 21 | BCUメモリマップ |
+| CpuInsnFixture | 28 | CPU命令実行 |
+| IntcFixture | 8 | 割り込みコントローラ |
+| T8Fixture | 5 | 8bitタイマ |
+| T16Fixture | 6 | 16bitタイマ |
+| PortCtrlFixture | 10 | ポートコントローラ |
+
+---
+
+## SDK実機資料から判明した重要事項
+
+> ソース: `docs/piece-cd/PIECE ハードウエア割り込み.html`, `PIECE ポート解説.html`  
+> (BIOS ver1.12 時点)
+
+### P/ECE BIOS による割り込み使用状況
+
+| ベクタ | 周辺機能 | BIOSでの用途 | 優先度 |
+|--------|---------|------------|--------|
+| 7 (NMI) | ウォッチドッグ | 1msタイマカウント専用 | NMI |
+| 17 | PORT1 (K51=USB INT-N) | USB INT | 6 |
+| 18 | PORT2 (赤外線受信) | 赤外線受信 | 7 |
+| 20 | KEY0 | スタンバイ解除 | 4 |
+| 22 | HSDMA Ch.0 | LCD転送 (割り込みは未使用、DMA動作のみ) | — |
+| 23 | HSDMA Ch.1 | サウンド再生 (PWM値転送) | 7/5 |
+| **30** | **T16 Ch.0 CRB** | **1msタイマ (contextsw + timer_sub)** | **6** |
+| 31 | T16 Ch.0 CRA | kernel では未使用（GetSysClock 計測のみ）| — |
+| 34, 35 | T16 Ch.1 CRB/CRA | サウンド再生 (PWM) | — |
+| 46, 47 | T16 Ch.4 CRB/CRA | USB 6MHz クロック供給 | — |
+| 50, 51 | T16 Ch.5 CRB/CRA | 赤外線送信 | 7 |
+| 52 | T8 Ch.0 UF | スタンバイ解除 | — |
+| 65 | 計時タイマ | アラーム | 4 |
+
+**NMI (trap 7) の実際の発生源**:  
+`sdk/sysdev/pcekn/timer.c` の `InitTimer()` を確認した結果:
+- `pceVectorSetTrap(7, nmi_isr)` → NMI ハンドラは ClockTicks++ のみ行うシンプルな関数
+- `pceVectorSetTrap(30, timer_isr)` → T16 CRB0 ハンドラ（ISR クリア → contextsw → timer_sub）
+- WDT を有効化 (`bp[0x170]=0x80, bp[0x171]=0x02`) → WDT が NMI を発生させる  
+
+つまり **T16 CRB0 は trap 30 経由** で timer_isr を呼ぶ。**NMI (trap 7) は WDT から独立して発生**する。  
+両者は完全に別のパス。T16 CRB0 と NMI の混同は誤りだった。
+
+**ISR クリア方式の確認**:  
+`timer_isr` が `*(unsigned char *)0x40282 &= ~4` でビット2をクリアする。  
+bp[0x29f]=0x06 で RSTONLY=0（直接書き込み）。`&= ~4` はビット2を0にする read-modify-write → write-0-to-clear。これは RSTONLY=0 の「直接書き込み」モードと一致する。
+
+### K ポート実際の配線 (ポート解説より)
+
+K5 ポート (K5D レジスタ = 0x0402C1):
+
+| ビット | 信号 | 種別 |
+|-------|------|------|
+| K50 | USB SUSPEND | 入力（非ボタン） |
+| K51 | USB INT-N | 入力（非ボタン） |
+| K52 | 赤外線受信データ | 入力 |
+| **K53** | **ボタン SELECT** | 入力 (0=押下) |
+| **K54** | **ボタン START** | 入力 (0=押下) |
+
+K6 ポート (K6D レジスタ = 0x0402C4):
+
+| ビット | 信号 | 種別 |
+|-------|------|------|
+| **K60** | **ボタン右** | 入力 (0=押下) |
+| **K61** | **ボタン左** | 入力 |
+| **K62** | **ボタン下** | 入力 |
+| **K63** | **ボタン上** | 入力 |
+| **K64** | **ボタン B** | 入力 |
+| **K65** | **ボタン A** | 入力 |
+| K66 | 電池電圧 ADC | アナログ入力 |
+| K67 | Di電圧 ADC | アナログ入力 |
+
+> **注意**: peripheral_portctrl.hpp の旧コメントは誤りだったため修正済み。  
+> SDL フロントエンド実装時は上記配線に従うこと。ボタンはすべて **active-low** (0=押下)。
+
+### P ポート主要信号
+
+| ポート | 信号 | 用途 |
+|--------|------|------|
+| P07 | OSC3クロック制御 | 0=48MHz, 1=24MHz → ClockControl 連携要 |
+| P15 | LCD SLCK | SIF3 SCLK3 |
+| P16 | LCD SID | SIF3 SOUT3 |
+| P20 | LCD CSB (OUT) | SRDY3 制御 (P32と直結) |
+| P21 | LCD RS | コマンド/データ選択 (0=データ, 1=コマンド) |
+| P23 | オーディオ出力 | T16 Ch.1 PWM出力 |
+| P26 | USB クロック 6MHz | T16 Ch.4 出力 |
+| P33 | LCD RESET | 0=リセット, 1=動作 |
+
+---
+
+## 未実装（今後のフェーズ）
+
+### P2: シリアルI/F (SIF3 → LCD)
+
+**アドレス**: 0x0401F6–0x0401FB
+
+SIF3 は LCD コントローラ (S6B0741) への SPI バス (SCLK3=P15, SOUT3=P16, SRDY3=P20/P32)。  
+カーネルブート時に SIF3 を初期化するため、read が 0 を返すスタブが必要になる可能性がある。
+
+SIF0–SIF2: SIF2 は赤外線送受信に使用。SIF0/1 は P/ECE では物理接続なし（ユーザ使用不可）。
+
+実装時の参考: `piemu/iomem.c` の SIF ハンドラ、`docs/S1C33209...FUNCTION.pdf` の SIF 章
+
+---
+
+### P2: 高速DMA (HSDMA0–HSDMA3)
+
+**アドレス**: 0x048220–0x04825F (各16バイト)
+
+- HSDMA Ch.0: LCD転送（割り込み未使用、DMA動作のみ）
+- HSDMA Ch.1: サウンド再生 PWM 値転送（割り込みベクタ 23, 優先度 7/5）
+- HSDMA Ch.2–3: 未使用（ユーザ利用可）
+
+SDL Audio + DMA 転送ロジックが必要。  
+参考: `piemu/iomem.c` の HSDMA ハンドラ
+
+---
+
+### P2: IDMA
+
+**アドレス**: 0x048200–0x048207
+
+複雑な汎用 DMA。P/ECE BIOS では未使用。将来のシステムモードブートで必要になる可能性あり。
+
+---
+
+### P2: LCDコントローラフロントエンド
+
+S6B0741 (SPI接続、128×88、2bitピクセル 4階調) を SDL3 ウィンドウに出力するフロントエンド。  
+`src/` には `piece-emu-system` ターゲット (CMakeLists.txt にコメントアウトで記載) を用意済み。  
+実装ファイル: `frontend/lcd.cpp`, `frontend/sound.cpp`, `frontend/input.cpp` (未作成)
+
+参考: `piemu/lcdc.c`（2bitピクセル→SDL2 Surface変換）  
+仮想画面バッファ: 128×88バイト (1バイト/ピクセル、下位2ビット有効、0=白 3=黒)
+
+---
+
+### P2: A/Dコンバータ スタブ
+
+**アドレス**: 0x040240–0x040245
+
+K66（電池電圧）・K67（Di電圧）の ADC 測定。カーネルが初期化時に参照する可能性あり。  
+P/ECE BIOS がシステムで全 ADC チャンネルを占有（ユーザ利用不可）。
+
+---
+
+### P2: クロックタイマ (RTC)
+
+**アドレス**: 0x040151–0x04015B
+
+1秒割り込み（ベクタ 65, 優先度 4）でアラーム機能を提供。カーネルが使用。
+
+---
+
+### P2: PortCtrl — P07 と ClockControl の連携
+
+P07=0: 48MHz (OSC3直結), P07=1: 24MHz (OSC3/2) — SDK ドキュメントで確認済み。  
+現状 P port は単純な読み書きを吸収するだけ。P07 書き込み時に `ClockControl::on_clock_change` を呼ぶよう PortCtrl と ClockControl を接続すること。
+
+---
+
+## システムモードブートに向けた次ステップ
+
+1. **カーネルブートトレース**: まず `--trace --max-cycles 5000000` でカーネルがどこまで進むか確認  
+   ```bash
+   ./build-src/piece-emu --trace --max-cycles 5000000 piece.elf 2>&1 | head -500
+   ```
+2. **ハングポイント特定**: SIF3 初期化待ち・HSDMA 初期化・T16 タイマ依存など、どこで止まるかを特定
+3. **SIF3 スタブ**: 初期化コードが応答を必要とする場合にスタブを追加
+4. **HSDMA スタブ**: DMA 制御レジスタの読み書きを吸収するスタブ
+5. **フロントエンド**: SDL3 + imgui で `piece-emu-system` ターゲットを実装
+
+---
+
+## 既知の設計上の注意点
+
+### `bus.write16` のバイト順序
+
+INTC などのレジスタを `bus.write16(addr, val)` で設定するとき、`val` の **lo バイト** が `addr` に、**hi バイト** が `addr+1` に書かれる（リトルエンディアン）。
+
+```cpp
+// 例: INTC_BASE+8 の halfword → lo=byte8, hi=byte9
+bus.write16(INTC_BASE + 8, 0x0300); // byte8=0x00, byte9=0x03  ← 意図通り
+bus.write16(INTC_BASE + 6, 0x0300); // byte6=0x00, byte7=0x03  ← byte6 に書きたい場合はこれは間違い
+bus.write16(INTC_BASE + 6, 0x0003); // byte6=0x03, byte7=0x00  ← 正しい
+```
+
+テスト作成時に混同しやすい点。ペリフェラルの「どのバイトに何を書くか」を常に意識すること。
+
+### T8 の PSET タイミング
+
+`bus.write16(T8_BASE, ctl_rld_word)` を1回で書くと、`on_ctl_write(ctl)` が呼ばれた時点では `rld_` がまだ更新されていない（lo バイトが先に処理されるため）。テストで PSET を使う場合は **先に RLD を書いてから CTL を書く**こと。
+
+```cpp
+bus.write16(T8_BASE, static_cast<uint16_t>(rld) << 8); // RLD=rld, CTL=0
+bus.write16(T8_BASE, ctl | (static_cast<uint16_t>(rld) << 8)); // CTL=ctl (PSET有効)
+```
+
+### T16 の CRA/CRB 共有優先度
+
+T16_CRA0 と T16_CRB0 は `pri_byte=6, pri_shift=0` を共有する（同じ3bitフィールドで優先度を設定）。IEN3 で個別に有効化できる（bit3=CRA0, bit2=CRB0）が、両方同時に有効化するには1回の `write16` で両ビットをセットすること（順番に書くと後の書き込みが前を上書きする）。
+
+```cpp
+bus.write16(INTC_BASE + 18, 0x000C); // IEN3[3|2] = CRA0|CRB0 を同時有効化
+```

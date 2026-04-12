@@ -4,6 +4,13 @@
 #include "elf_loader.hpp"
 #include "gdb_rsp.hpp"
 #include "semihosting.hpp"
+#include "peripheral_intc.hpp"
+#include "peripheral_clkctl.hpp"
+#include "peripheral_t8.hpp"
+#include "peripheral_t16.hpp"
+#include "peripheral_portctrl.hpp"
+#include "peripheral_bcu_area.hpp"
+#include "peripheral_wdt.hpp"
 
 #include <CLI/CLI.hpp>
 #include <cstdio>
@@ -59,6 +66,31 @@ int main(int argc, char** argv) {
 
         semihosting_init(bus, cpu);
 
+        // Peripheral initialisation
+        InterruptController intc;
+        intc.attach(bus, [&cpu](int trap_no, int level) {
+            cpu.assert_trap(trap_no, level);
+        });
+
+        ClockControl clk;
+        clk.attach(bus);
+
+        Timer8bit  t8_ch[4]  = {Timer8bit(0),  Timer8bit(1),  Timer8bit(2),  Timer8bit(3)};
+        Timer16bit t16_ch[6] = {Timer16bit(0), Timer16bit(1), Timer16bit(2),
+                                Timer16bit(3), Timer16bit(4), Timer16bit(5)};
+        for (int i = 0; i < 4; i++) t8_ch[i].attach(bus, intc, clk);
+        for (int i = 0; i < 6; i++) t16_ch[i].attach(bus, intc, clk);
+
+        PortCtrl portctrl;
+        portctrl.attach(bus, intc);
+
+        BcuAreaCtrl bcu_area;
+        bcu_area.attach(bus, cpu);
+
+        WatchdogTimer wdt;
+        wdt.attach(bus, clk,
+            [&cpu](int no, int lvl) { cpu.assert_trap(no, lvl); });
+
         uint32_t entry = elf_load(bus, elf_path);
         std::fprintf(stderr, "Loaded %s, entry=0x%06X\n", elf_path.c_str(), entry);
 
@@ -77,6 +109,10 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "  %s\n", dis.c_str());
             }
             total_cycles += cpu.step();
+            // Tick cycle-driven peripherals after each CPU step
+            for (int i = 0; i < 4; i++) t8_ch[i].tick(total_cycles);
+            for (int i = 0; i < 6; i++) t16_ch[i].tick(total_cycles);
+            wdt.tick(total_cycles);
             if (max_cycles && total_cycles >= max_cycles) {
                 std::fprintf(stderr, "Reached max-cycles limit (%llu)\n",
                     (unsigned long long)max_cycles);
