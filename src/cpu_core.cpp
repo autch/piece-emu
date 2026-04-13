@@ -175,7 +175,7 @@ void Cpu::reset() {
 // Returns true if this instruction can legally follow an EXT prefix.
 // Instructions with EXT="-" in the manual return false.
 static bool ext_capable(uint16_t insn) {
-    int c = cls(insn);
+    int c = Insn{insn}.cls();
     if (c == 6) return true;   // EXT before EXT: up to 2 consecutive is legal
     if (c == 7) return false;  // undefined
     if (c == 0) {
@@ -216,7 +216,7 @@ static bool ext_capable(uint16_t insn) {
 enum DelayClass { DC_OK = 0, DC_HARD = 1, DC_SOFT = 2 };
 
 static DelayClass delay_slot_class(uint16_t insn) {
-    int c = cls(insn);
+    int c = Insn{insn}.cls();
     if (c == 6) return DC_HARD;  // EXT in delay slot: D="-"
     if (c == 7) return DC_HARD;  // undefined
     if (c == 0) {
@@ -339,9 +339,10 @@ int Cpu::step() {
         //   add/sub %sp, imm10 : cls=4, op1_f=0 or 1
         //   ld.w %sp, %rs      : cls=5, op2_f=0, op1_f=0, rd=1 (SP)
         if (state.delay_caller != 0) {
-            bool writes_sp = (cls(insn) == 4 && ((insn >> 10) & 7) <= 1)
-                          || (cls(insn) == 5 && ((insn >> 8) & 3) == 0
-                              && ((insn >> 10) & 7) == 0 && (insn & 0xF) == 1);
+            Insn ci{insn};
+            bool writes_sp = (ci.cls() == 4 && ci.op1() <= 1)
+                          || (ci.cls() == 5 && ci.op2() == 0
+                              && ci.op1() == 0 && ci.rd() == 1);
             if (writes_sp) {
                 static const char* caller_name[] = { "", "ret.d", "call.d" };
                 diag_warn("delay_slot_sp_clobber", insn_pc,

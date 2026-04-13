@@ -6,7 +6,7 @@
 // ============================================================================
 
 void Cpu::h_ext(Cpu& cpu, uint16_t insn) {
-    uint32_t imm13 = insn & 0x1FFF;
+    uint32_t imm13 = Insn{insn}.imm13();
     if (cpu.state.pending_ext_count >= 2) {
         // 3rd+ consecutive EXT: hardware uses the 1st and the latest, discarding all middle ones.
         uint32_t fault_pc = cpu.state.pc - 2;

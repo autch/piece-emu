@@ -10,7 +10,7 @@ std::array<Cpu::Handler, 65536> Cpu::build_table() {
 
     for (uint32_t i = 0; i < 65536; i++) {
         uint16_t insn = static_cast<uint16_t>(i);
-        int c = cls(insn);
+        int c = Insn{insn}.cls();
 
         if (c == 6) { t[i] = h_ext; continue; }
 

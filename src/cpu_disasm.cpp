@@ -8,7 +8,8 @@
 // ============================================================================
 
 std::string Cpu::disasm(uint32_t addr) const {
-    uint16_t i = bus_.fetch16(addr);
+    uint16_t raw = bus_.fetch16(addr);
+    Insn i{raw};
 
     auto sx = [](uint32_t v, int bits) -> int32_t {
         return static_cast<int32_t>(sign_ext(v, bits));
@@ -16,18 +17,16 @@ std::string Cpu::disasm(uint32_t addr) const {
 
     std::string mnem;
 
-    int c = (i >> 13) & 7;
-    switch (c) {
+    switch (i.cls()) {
     case 6: { // EXT
-        int imm13 = i & 0x1FFF;
-        mnem = std::format("ext\t{}", imm13);
+        mnem = std::format("ext\t{}", i.imm13());
         break;
     }
-    case 0: { // Class 0a (op1_f 0..3) / Class 0b (op1_f 4..15)
-        int op1_f = (i >> 9) & 0xF; // bits[12:9]
-        int op2_f = (i >> 6) & 3;   // bits[7:6]  (class 0a)
-        bool d    = (i >> 8) & 1;   // delay bit
-        int rdn   = i & 0xF;
+    case 0: { // Class 0a (c0_op1 0..3) / Class 0b (c0_op1 4..15)
+        int op1_f = i.c0_op1(); // bits [12:9]
+        int op2_f = i.c0_op2(); // bits [7:6]  (class 0a)
+        bool d    = i.d();
+        int rdn   = i.rd();
 
         if (op1_f < 4) { // Class 0a
             switch (op1_f) {
@@ -51,7 +50,7 @@ std::string Cpu::disasm(uint32_t addr) const {
                 switch (op2_f) {
                 case 0: mnem = "brk"; break;
                 case 1: mnem = "retd"; break;
-                case 2: mnem = std::format("int\t{}", i & 0x3F); break;
+                case 2: mnem = std::format("int\t{}", i.imm2()); break;
                 case 3: mnem = "reti"; break;
                 }
                 break;
@@ -65,8 +64,7 @@ std::string Cpu::disasm(uint32_t addr) const {
                 break;
             }
         } else { // Class 0b: PC-relative branches/calls
-            int sign8 = i & 0xFF;
-            int32_t off = sx(sign8, 8);
+            int32_t off = sx(i.sign8(), 8);
             // Target = insn_addr + 2 * disp  (same as h_jr formula)
             uint32_t target = static_cast<uint32_t>(static_cast<int32_t>(addr) + 2 * off);
             static const char* br_names[12] = {
@@ -83,10 +81,10 @@ std::string Cpu::disasm(uint32_t addr) const {
         break;
     }
     case 1: { // Class 1: memory ops (o2=0/1) or ALU reg-reg (o2=2)
-        int o1 = (i >> 10) & 7;
-        int o2 = (i >> 8) & 3;
-        int rbn = (i >> 4) & 0xF;
-        int rdn = i & 0xF;
+        int o1  = i.op1();
+        int o2  = i.op2();
+        int rbn = i.rb();
+        int rdn = i.rd();
         if (o2 == 2) { // ALU reg-reg: op1 selects operation
             static const char* alunames[] = {"add","sub","cmp","ld.w","and","or","xor","not"};
             mnem = std::format("{}\t%r{}, %r{}", alunames[o1], rdn, rbn);
@@ -108,10 +106,9 @@ std::string Cpu::disasm(uint32_t addr) const {
         break;
     }
     case 2: { // Class 2: SP-relative
-        int o1 = (i >> 10) & 7;
-        int rdrs = i & 0xF;
-        int imm6 = (i >> 4) & 0x3F;
-        int32_t off6 = sx(imm6, 6);
+        int o1   = i.op1();
+        int rdrs = i.rd();
+        int32_t off6 = sx(i.imm6(), 6);
         static const char* ldst2[] = {"ld.b","ld.ub","ld.h","ld.uh","ld.w","st.b","st.h","st.w"};
         static const int scales2[] = {1, 1, 2, 2, 4, 1, 2, 4};
         if (o1 <= 4) { // loads
@@ -122,29 +119,25 @@ std::string Cpu::disasm(uint32_t addr) const {
         break;
     }
     case 3: { // Class 3: immediate ALU
-        int o1 = (i >> 10) & 7;
-        int rdn = i & 0xF;
-        int imm6 = (i >> 4) & 0x3F;
-        int32_t simm = sx(imm6, 6);
+        int o1   = i.op1();
+        int rdn  = i.rd();
+        int32_t simm = sx(i.imm6(), 6);
         static const char* names3[] = {"add","sub","cmp","ld.w","and","or","xor","not"};
         mnem = std::format("{}\t%r{}, {}", names3[o1], rdn, simm);
         break;
     }
     case 4: { // Class 4: SP adjust / shifts / misc
-        int o1 = (i >> 10) & 7;
-        int o2 = (i >> 8) & 3;
-        int rdn = i & 0xF;
-        int rsn = (i >> 4) & 0xF;
+        int o1  = i.op1();
+        int o2  = i.op2();
+        int rdn = i.rd();
+        int rsn = i.rs();
         if (o1 == 0) { // add %sp, imm10
-            int imm10 = i & 0x3FF;
-            mnem = std::format("add\t%sp, {}", imm10 * 4);
+            mnem = std::format("add\t%sp, {}", i.imm10() * 4);
         } else if (o1 == 1) { // sub %sp, imm10
-            int imm10 = i & 0x3FF;
-            mnem = std::format("sub\t%sp, {}", imm10 * 4);
+            mnem = std::format("sub\t%sp, {}", i.imm10() * 4);
         } else if (o2 == 0) { // imm4 shifts
             static const char* shnames_imm[] = {"?","?","srl","sll","sra","sla","rr","rl"};
-            int shamt = rsn;
-            mnem = std::format("{}\t%r{}, {}", shnames_imm[o1], rdn, shamt);
+            mnem = std::format("{}\t%r{}, {}", shnames_imm[o1], rdn, rsn);
         } else if (o2 == 1) { // reg shifts
             static const char* shnames_rs[] = {"?","?","srl","sll","sra","sla","rr","rl"};
             mnem = std::format("{}\t%r{}, %r{}", shnames_rs[o1], rdn, rsn);
@@ -158,19 +151,19 @@ std::string Cpu::disasm(uint32_t addr) const {
         break;
     }
     case 5: { // Class 5: special regs / bit ops / MAC
-        int o1 = (i >> 10) & 7;
-        int o2 = (i >> 8) & 3;
-        int rdn = i & 0xF;
-        int rsn = (i >> 4) & 0xF;
+        int o1  = i.op1();
+        int o2  = i.op2();
+        int rdn = i.rd();
+        int rsn = i.rs();
         static const char* spreg[] = {"%psr","%sp","%alr","%ahr"};
         if (o1 == 0 && o2 == 0) { // ld.w %special, %rs (write special)
             mnem = std::format("ld.w\t{}, %r{}", spreg[rdn & 3], rsn);
         } else if (o1 == 1 && o2 == 0) { // ld.w %rd, %special (read special)
             mnem = std::format("ld.w\t%r{}, {}", rdn, spreg[rsn & 3]);
         } else if (o1 == 2) { // bit ops [%rb], imm3
-            int bit = (i >> 4) & 7;
+            // imm3 is in bits [2:0]; rb is in bits [7:4]
             static const char* bop[] = {"btst","bclr","bset","bnot"};
-            mnem = std::format("{}\t[%r{}], {}", bop[o2], rsn, bit);
+            mnem = std::format("{}\t[%r{}], {}", bop[o2], rsn, i.imm3());
         } else if (o1 == 3) { // adc/sbc
             mnem = std::format("{}\t%r{}, %r{}", (o2 == 0) ? "adc" : "sbc", rdn, rsn);
         } else if (o1 == 4) { // ld byte/half reg-reg
@@ -187,9 +180,9 @@ std::string Cpu::disasm(uint32_t addr) const {
         break;
     }
     default:
-        mnem = std::format("?cls{}", c);
+        mnem = std::format("?cls{}", i.cls());
         break;
     }
 
-    return std::format("0x{:06X}: {:04X}  {}", addr, i, mnem);
+    return std::format("0x{:06X}: {:04X}  {}", addr, raw, mnem);
 }

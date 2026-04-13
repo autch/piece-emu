@@ -34,7 +34,7 @@ void Cpu::h_halt(Cpu& cpu, uint16_t) {
 
 void Cpu::h_pushn(Cpu& cpu, uint16_t insn) {
     cpu.flush_ext();
-    int rs_n = insn & 0xF;
+    int rs_n = Insn{insn}.rd();
     for (int i = rs_n; i >= 0; i--) {
         cpu.state.sp -= 4;
         cpu.bus_.write32(cpu.state.sp, cpu.state.r[i]);
@@ -43,7 +43,7 @@ void Cpu::h_pushn(Cpu& cpu, uint16_t insn) {
 
 void Cpu::h_popn(Cpu& cpu, uint16_t insn) {
     cpu.flush_ext();
-    int rd_n = insn & 0xF;
+    int rd_n = Insn{insn}.rd();
     for (int i = 0; i <= rd_n; i++) {
         cpu.state.r[i] = cpu.bus_.read32(cpu.state.sp);
         cpu.state.sp += 4;
@@ -66,7 +66,7 @@ void Cpu::h_retd(Cpu& cpu, uint16_t) {
 
 void Cpu::h_int(Cpu& cpu, uint16_t insn) {
     cpu.flush_ext();
-    int vec = insn & 3;
+    int vec = Insn{insn}.imm2();
     cpu.do_trap(vec, 0);
 }
 
@@ -79,8 +79,9 @@ void Cpu::h_reti(Cpu& cpu, uint16_t) {
 
 void Cpu::h_call_rb(Cpu& cpu, uint16_t insn) {
     cpu.flush_ext();
-    int rb_n = insn & 0xF;
-    bool delayed = (insn >> 8) & 1;
+    Insn i{insn};
+    int rb_n = i.rb();
+    bool delayed = i.d();
     uint32_t target = cpu.state.r[rb_n];
     uint32_t ret_addr = cpu.state.pc + (delayed ? 2 : 0);
     cpu.state.sp -= 4;
@@ -91,7 +92,7 @@ void Cpu::h_call_rb(Cpu& cpu, uint16_t insn) {
 
 void Cpu::h_ret(Cpu& cpu, uint16_t insn) {
     cpu.flush_ext();
-    bool delayed = (insn >> 8) & 1;
+    bool delayed = Insn{insn}.d();
     uint32_t target = cpu.bus_.read32(cpu.state.sp); cpu.state.sp += 4;
     if (delayed) cpu.state.delay_caller = 1;
     do_c0_jump(cpu, target, delayed);
@@ -99,8 +100,9 @@ void Cpu::h_ret(Cpu& cpu, uint16_t insn) {
 
 void Cpu::h_jp_rb(Cpu& cpu, uint16_t insn) {
     cpu.flush_ext();
-    int rb_n = insn & 0xF;
-    bool delayed = (insn >> 8) & 1;
+    Insn i{insn};
+    int rb_n = i.rb();
+    bool delayed = i.d();
     uint32_t fault_pc = cpu.state.pc - 2;
 
     // jp.d %rb is forbidden: a hardware bug causes the DMA controller to skip
@@ -123,8 +125,9 @@ void Cpu::h_jp_rb(Cpu& cpu, uint16_t insn) {
 // PC-relative branch: target = insn_addr + 2 * disp
 // insn_addr is (state.pc - 2) because step() pre-advances PC.
 void Cpu::h_jr(Cpu& cpu, uint16_t insn, bool taken) {
-    int32_t disp = cpu.ext_pcrel(insn & 0xFF);
-    bool delayed = (insn >> 8) & 1;
+    Insn i{insn};
+    int32_t disp = cpu.ext_pcrel(i.sign8());
+    bool delayed = i.d();
     cpu.flush_ext();
     if (taken) {
         uint32_t insn_addr = cpu.state.pc - 2;
@@ -148,11 +151,12 @@ void Cpu::h_jreq (Cpu& cpu, uint16_t i) { h_jr(cpu, i,  cpu.state.psr.z()); }
 void Cpu::h_jrne (Cpu& cpu, uint16_t i) { h_jr(cpu, i, !cpu.state.psr.z()); }
 
 void Cpu::h_call_simm8(Cpu& cpu, uint16_t insn) {
-    int32_t disp = cpu.ext_pcrel(insn & 0xFF);
+    Insn i{insn};
+    int32_t disp = cpu.ext_pcrel(i.sign8());
     cpu.flush_ext();
     uint32_t insn_addr = cpu.state.pc - 2;
     uint32_t target = static_cast<uint32_t>(static_cast<int32_t>(insn_addr) + 2 * disp);
-    bool delayed = (insn >> 8) & 1;
+    bool delayed = i.d();
     uint32_t ret_addr = cpu.state.pc + (delayed ? 2 : 0);
     cpu.state.sp -= 4;
     cpu.bus_.write32(cpu.state.sp, ret_addr);
@@ -161,10 +165,11 @@ void Cpu::h_call_simm8(Cpu& cpu, uint16_t insn) {
 }
 
 void Cpu::h_jp_simm8(Cpu& cpu, uint16_t insn) {
-    int32_t disp = cpu.ext_pcrel(insn & 0xFF);
+    Insn i{insn};
+    int32_t disp = cpu.ext_pcrel(i.sign8());
     cpu.flush_ext();
     uint32_t insn_addr = cpu.state.pc - 2;
-    bool delayed = (insn >> 8) & 1;
+    bool delayed = i.d();
     uint32_t target = static_cast<uint32_t>(static_cast<int32_t>(insn_addr) + 2 * disp);
     do_c0_jump(cpu, target, delayed);
 }
