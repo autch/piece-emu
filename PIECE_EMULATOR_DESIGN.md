@@ -68,8 +68,8 @@ $ lldb
 ゲーム実行用。カーネル込みのフルシステムエミュレーション。
 
 - PFIイメージからフラッシュ全体をロードし、リセットベクタからブート
-- LCD表示（SDL）、サウンド出力、ボタン入力が必要
-- GUI は SDL + imgui を想定
+- LCD表示（SDL3）、サウンド出力、ボタン入力が必要
+- GUI は SDL3 + imgui を想定
 - デバッガを付けるが、GDB RSPだけか自前のデバッガUIを持つかは未定
 - タイマ・割り込み・DMA・クロック切替などP1/P2コンポーネントが前提
 
@@ -86,24 +86,34 @@ $ piece-emu --pfi piece.pfi --gdb 1234
 共通基盤をライブラリとして構築し、2つの実行バイナリがこれをリンクする。同一バイナリである必要はなく、依存関係を最小化するために分離する。
 
 ```
-libpiece_core.a  (共通ライブラリ)
+libpiece_core.a  (src/core/)
 ├── CPUコア / BCU / メモリ
-├── 逆アセンブラ
+└── 逆アセンブラ
+
+libpiece_soc.a   (src/soc/) → piece_core
+├── INTC / ClkCtl
+├── T8×4 / T16×6
+├── PortCtrl / BcuArea / WDT / RTC
+└── (将来: SIF3, HSDMA)
+
+piece_board      (src/board/, INTERFACE) → piece_soc
+└── (将来: S6B0741 LCD, NAND Flash, PDIUSBD12 USB, SDカード)
+
+libpiece_debug.a (src/debug/) → piece_core
+├── ELFローダ
 ├── セミホスティング
-├── GDB RSP
-├── タイマ / 割り込み / DMA
-└── ELFローダ / PFIローダ
+└── GDB RSP
 
 piece-emu          (ベアメタルモード実行バイナリ)
-├── libpiece_core.a
+├── piece_debug + piece_board + piece_soc + piece_core
 ├── CLI フロントエンド
 └── 外部依存: なし（POSIXのみ）
 
 piece-emu-system   (システムモード実行バイナリ、将来)
-├── libpiece_core.a
+├── piece_debug + piece_board + piece_soc + piece_core
 ├── GUI フロントエンド
 ├── LCD / Sound / Input
-└── 外部依存: SDL, imgui, ...
+└── 外部依存: SDL3
 ```
 
 ベアメタルモードの `piece-emu` はPOSIX環境さえあれば動作し、CI環境やヘッドレスサーバにSDL等をインストールする必要がない。
@@ -642,7 +652,7 @@ TEST_F(TestFixture, ExtAddUnsigned) {
 }
 ```
 
-これはモックではなくフェイク（簡易版の実オブジェクト）なので、テスト専用のインタフェース抽象化は不要。`libpiece_core.a` に含まれる実クラスをそのまま使う。
+これはモックではなくフェイク（簡易版の実オブジェクト）なので、テスト専用のインタフェース抽象化は不要。`piece_soc` / `piece_core` に含まれる実クラスをそのまま使う。
 
 #### 第3層: システムテスト（ベアメタルELF実行）
 
@@ -653,22 +663,31 @@ TEST_F(TestFixture, ExtAddUnsigned) {
 #### CMake 構成
 
 ```cmake
-# 共通コアライブラリ
-add_library(piece_core STATIC ...)
+# 各ライブラリ層（それぞれの CMakeLists.txt で定義）
+add_subdirectory(core)    # → libpiece_core.a
+add_subdirectory(soc)     # → libpiece_soc.a  (PUBLIC: piece_core)
+add_subdirectory(board)   # → piece_board INTERFACE (PUBLIC: piece_soc)
+add_subdirectory(debug)   # → libpiece_debug.a (PUBLIC: piece_core)
+add_subdirectory(host)    # 将来: SDL3
 
 # 第1層・第2層: C++ ユニットテスト
 enable_testing()
 find_package(GTest REQUIRED)
 
 add_executable(piece_unit_tests
-    tests/unit/test_resolve_immediate.cpp
+    tests/unit/test_ext_imm.cpp
     tests/unit/test_psr_flags.cpp
     tests/unit/test_shift_decode.cpp
     tests/unit/test_disasm.cpp
     tests/unit/test_bcu.cpp
     tests/unit/test_cpu_instructions.cpp
+    tests/unit/test_peripheral_intc.cpp
+    tests/unit/test_peripheral_t8.cpp
+    tests/unit/test_peripheral_t16.cpp
+    tests/unit/test_peripheral_portctrl.cpp
+    tests/unit/test_peripheral_rtc.cpp
 )
-target_link_libraries(piece_unit_tests PRIVATE piece_core GTest::gtest_main)
+target_link_libraries(piece_unit_tests PRIVATE piece_soc piece_core GTest::gtest_main)
 add_test(NAME unit_tests COMMAND piece_unit_tests)
 
 # 第3層: システムテスト（ベアメタルELF）
@@ -796,7 +815,7 @@ echo "Exit code: $?"   # 0=全テストPASS, 非0=いずれかFAIL
 
 ### 4.5 実装状況（2026-04時点）
 
-全ポートが `src/semihosting.cpp` に実装済み。テストプログラム向けヘッダは 2 種類ある。
+全ポートが `src/debug/semihosting.cpp` に実装済み。テストプログラム向けヘッダは 2 種類ある。
 
 | ファイル | 用途 |
 |---|---|

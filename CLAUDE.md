@@ -123,10 +123,13 @@ ninja -C build-src
 ninja -C build-src test                          # run all unit tests (layers 1+2)
 ```
 
-Build artifacts:
-- `libpiece_core.a` — 共通エミュレーションコア（CPU/BCU/メモリ/逆アセ/GDB RSP/セミホスティング）
-- `piece-emu` — ベアメタル/ヘッドレス CLI フロントエンド（POSIXのみ、SDL不要）
-- `piece-emu-system` — システムモードフロントエンド（将来; SDL/imgui使用、CMakeLists.txt にコメントアウトで記載）
+Build artifacts (static libraries, layered):
+- `libpiece_core.a` — S1C33000 CPU, BCU, disassembler (`src/core/`)
+- `libpiece_soc.a`  — S1C33209 on-chip peripherals: INTC, ClkCtl, T8/T16, PortCtrl, BcuArea, WDT, RTC (`src/soc/`)
+- `libpiece_debug.a` — ELF loader, semihosting, GDB RSP stub (`src/debug/`)
+- `piece_board` (INTERFACE) — board-level external devices placeholder (`src/board/`); links `piece_soc` transitively
+- `piece-emu` — headless CLI frontend (POSIX only, no SDL)
+- `piece-emu-system` — full-system frontend (future; SDL3, CMakeLists.txt にコメントアウトで記載)
 
 Semihosting ports: 0x060000=CONSOLE_CHAR, 0x060002=CONSOLE_STR, 0x060008=TEST_RESULT (0=PASS).
 Loading 0x060008 requires **2 EXT instructions** (bit 18 set → 19-bit sign-extend is negative).

@@ -71,10 +71,10 @@ Supports the kernel's `ei; slp` pattern without busy-waiting.
 
 ### セミホスティング / Semihosting ✅
 
-全ポート実装済み（`src/semihosting.cpp`）。
+全ポート実装済み（`src/debug/semihosting.cpp`）。
 テストプログラム向けヘッダ：`src/tests/bare_metal/semihosting.h`、`src/tests/bare_metal/piece_emu_debug.h`
 
-All ports implemented (`src/semihosting.cpp`).
+All ports implemented (`src/debug/semihosting.cpp`).
 Test headers: `src/tests/bare_metal/semihosting.h`, `src/tests/bare_metal/piece_emu_debug.h`
 
 | オフセット | 名前 | 方向 | 機能 |
@@ -100,22 +100,33 @@ Test headers: `src/tests/bare_metal/semihosting.h`, `src/tests/bare_metal/piece_
 ```
 piece-emu/
 ├── src/
-│   ├── cpu_class{0-6}.cpp          S1C33 命令実装（ISA クラス 0〜6）
-│   ├── cpu_disasm.cpp              逆アセンブラ / Disassembler
-│   ├── cpu_core.cpp                CPU コア・ディスパッチ / CPU core and dispatch
-│   ├── bus.cpp                     バスコントロールユニット（BCU）/ Bus Control Unit
-│   ├── elf_loader.cpp              ELF ローダ / ELF loader
-│   ├── gdb_rsp.cpp                 GDB RSP スタブ / GDB RSP stub
-│   ├── semihosting.cpp             セミホスティング（全ポート実装済み）
-│   ├── peripheral_intc.cpp/hpp     割り込みコントローラ / Interrupt controller
-│   ├── peripheral_clkctl.cpp/hpp   クロック制御 / Clock control
-│   ├── peripheral_t8.cpp/hpp       8 bit タイマ × 4 / 8-bit timers ×4
-│   ├── peripheral_t16.cpp/hpp      16 bit タイマ × 6 / 16-bit timers ×6
-│   ├── peripheral_portctrl.cpp/hpp K/P ポート・キー割り込み / K/P ports and key IRQ
-│   ├── peripheral_bcu_area.cpp/hpp BCU エリア制御（TTBR）
-│   ├── peripheral_wdt.cpp/hpp      ウォッチドッグタイマ / Watchdog timer
-│   ├── peripheral_rtc.cpp/hpp      計時タイマ（RTC）/ Real-time clock
-│   ├── tick.hpp                    ITickable インタフェース / ITickable interface
+│   ├── core/                       libpiece_core.a — CPU コア / BCU / 逆アセンブラ
+│   │   ├── cpu_class{0-6}.cpp      S1C33 命令実装（ISA クラス 0〜6）
+│   │   ├── cpu_disasm.cpp          逆アセンブラ / Disassembler
+│   │   ├── cpu_core.cpp            CPU コア・ディスパッチ / CPU core and dispatch
+│   │   ├── bus.cpp                 バスコントロールユニット（BCU）/ Bus Control Unit
+│   │   ├── tick.hpp                ITickable インタフェース / ITickable interface
+│   │   └── CMakeLists.txt
+│   ├── soc/                        libpiece_soc.a — S1C33209 オンチップ周辺デバイス
+│   │   ├── peripheral_intc.cpp/hpp 割り込みコントローラ / Interrupt controller
+│   │   ├── peripheral_clkctl.cpp/hpp クロック制御 / Clock control
+│   │   ├── peripheral_t8.cpp/hpp   8 bit タイマ × 4 / 8-bit timers ×4
+│   │   ├── peripheral_t16.cpp/hpp  16 bit タイマ × 6 / 16-bit timers ×6
+│   │   ├── peripheral_portctrl.cpp/hpp K/P ポート・キー割り込み / K/P ports and key IRQ
+│   │   ├── peripheral_bcu_area.cpp/hpp BCU エリア制御（TTBR）
+│   │   ├── peripheral_wdt.cpp/hpp  ウォッチドッグタイマ / Watchdog timer
+│   │   ├── peripheral_rtc.cpp/hpp  計時タイマ（RTC）/ Real-time clock
+│   │   └── CMakeLists.txt
+│   ├── board/                      piece_board (INTERFACE) — 外付けデバイス（将来）
+│   │   └── CMakeLists.txt          S6B0741 LCD / NAND Flash / PDIUSBD12 USB (未実装)
+│   ├── debug/                      libpiece_debug.a — ELF ローダ / セミホスティング / GDB RSP
+│   │   ├── elf_loader.cpp          ELF ローダ / ELF loader
+│   │   ├── semihosting.cpp         セミホスティング（全ポート実装済み）
+│   │   ├── gdb_rsp.cpp             GDB RSP スタブ / GDB RSP stub
+│   │   ├── gdb_rsp_regs.cpp        GDB レジスタアクセス層 / Register access layer
+│   │   └── CMakeLists.txt
+│   ├── host/                       将来: SDL3 フロントエンド / Future SDL3 frontend
+│   │   └── CMakeLists.txt
 │   ├── main.cpp                    CLI フロントエンド / CLI front-end
 │   ├── CMakeLists.txt
 │   ├── vcpkg.json                  依存ライブラリ（GTest, CLI11）/ Dependencies
@@ -181,7 +192,9 @@ ninja -C build-src
 
 ビルド成果物 / Build artifacts:
 - `build-src/piece-emu` — CLI フロントエンド（ベアメタルモード）/ CLI front-end (bare-metal mode)
-- `build-src/libpiece_core.a` — エミュレーションコアライブラリ / Emulation core library
+- `build-src/libpiece_core.a` — CPU コア・BCU・逆アセンブラ / CPU core, BCU, disassembler
+- `build-src/libpiece_soc.a` — S1C33209 オンチップ周辺デバイス / On-chip peripherals
+- `build-src/libpiece_debug.a` — ELF ローダ・セミホスティング・GDB RSP / ELF loader, semihosting, GDB RSP
 
 ---
 

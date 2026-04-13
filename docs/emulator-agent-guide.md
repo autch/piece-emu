@@ -2,8 +2,8 @@
 
 **対象読者**: LLVM S1C33 バックエンドの実装・テストを担当するAIエージェント  
 **エミュレータ実装**: `src/`  
-**現行バイナリ**: `build-src/piece_emu`  
-**実装状況**: P0 完了（CPU全命令 + ELFローダ + セミホスティング + GDB RSP）
+**現行バイナリ**: `build-src/piece-emu`  
+**実装状況**: P1 完了（CPU全命令 + ELFローダ + セミホスティング + GDB RSP + 全周辺デバイス + HLT高速スキップ）
 
 ---
 
@@ -16,14 +16,12 @@
 ## ビルド
 
 ```bash
-cd /home/autch/src/piece-emu
-mkdir -p build-src
-cd build-src
-cmake ../src -G Ninja
-ninja
+cmake -S src -B build-src -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE=/home/autch/src/vcpkg/scripts/buildsystems/vcpkg.cmake
+ninja -C build-src
 ```
 
-バイナリ: `build-src/piece_emu`
+バイナリ: `build-src/piece-emu`
 
 ---
 
@@ -51,17 +49,17 @@ Options:
 
 ```bash
 # 実行（TEST_RESULT ポートで自動終了）
-./build-src/piece_emu test.elf
+./build-src/piece-emu test.elf
 echo "Exit: $?"          # 0=PASS, 1=FAIL
 
 # 命令トレース付き実行（デバッグ時）
-./build-src/piece_emu --trace test.elf 2>trace.log
+./build-src/piece-emu --trace test.elf 2>trace.log
 
 # サイクル数を制限（無限ループ防止）
-./build-src/piece_emu --max-cycles 2000000 test.elf
+./build-src/piece-emu --max-cycles 2000000 test.elf
 
 # GDB RSP デバッグ（別ターミナルから lldb/gdb で接続）
-./build-src/piece_emu --gdb 1234 test.elf &
+./build-src/piece-emu --gdb 1234 test.elf &
 lldb -o "gdb-remote 1234"
 ```
 
@@ -197,7 +195,7 @@ $LD -T src/tests/bare_metal/iram.ld --entry _start \
     crt0.o crt_init.o test_foo.o -o test_foo.elf
 
 # 実行
-./build-src/piece_emu test_foo.elf
+./build-src/piece-emu test_foo.elf
 ```
 
 ---
@@ -208,7 +206,7 @@ $LD -T src/tests/bare_metal/iram.ld --entry _start \
 
 ```bash
 # ターミナル 1: エミュレータを GDB 待ち状態で起動
-./build-src/piece_emu --gdb 1234 test_foo.elf
+./build-src/piece-emu --gdb 1234 test_foo.elf
 
 # ターミナル 2: lldb で接続
 lldb
@@ -244,24 +242,25 @@ lldb
 3. 実行:   make -C src/tests/bare_metal run
 4. PASS → 次のタスクへ
    FAIL → トレースで調査:
-           ./build-src/piece_emu --trace test_foo.elf 2>&1 | less
+           ./build-src/piece-emu --trace test_foo.elf 2>&1 | less
 5. 特定命令でフォルトする場合 → --trace で oops ダンプを確認
 6. 修正して 2 に戻る
 ```
 
 ---
 
-## 現在の制限事項（P0 完了時点）
+## 現在の制限事項（P1 完了時点）
 
 以下は **未実装** であり、現時点では使用できない：
 
-- タイマ・割り込みコントローラ（カーネルを使うアプリは動作しない）
-- LCD / DMA / ボタン入力 / PWM サウンド
+- SIF3（LCD コントローラへの SPI バス）
+- HSDMA（LCD 転送・サウンド PWM 値転送）
+- LCD フロントエンド（S6B0741 → SDL3 ウィンドウ）
+- ボタン入力・PWM サウンド出力
 - PFI フラッシュイメージロード（ゲーム実行不可）
-- セミホスティングポート: CYCLE_COUNT, REG_SNAPSHOT, TRACE_CTL（ポート経由）, BKPT_SET/CLR
-- BCU ウェイトサイクル（全アクセスを 1 サイクル扱い）
 
 **ベアメタル ELF のテストには全機能が揃っている。**
+**カーネルブートは T16/INTC/RTC/ClkCtl 実装済みにより大幅に進むが、SIF3/HSDMA 待ちでハングする可能性あり。**
 
 ---
 
