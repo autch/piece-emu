@@ -19,6 +19,22 @@
 #include <stdexcept>
 #include <string>
 
+static void print_reg_snapshot(const CpuState& s) {
+    std::fprintf(stderr,
+        "[SNAPSHOT] Registers:\n"
+        "  R 0=%08X  R 1=%08X  R 2=%08X  R 3=%08X\n"
+        "  R 4=%08X  R 5=%08X  R 6=%08X  R 7=%08X\n"
+        "  R 8=%08X  R 9=%08X  R10=%08X  R11=%08X\n"
+        "  R12=%08X  R13=%08X  R14=%08X  R15=%08X\n"
+        "   PC=%08X   SP=%08X  PSR=%08X\n"
+        "  ALR=%08X  AHR=%08X\n",
+        s.r[0],  s.r[1],  s.r[2],  s.r[3],
+        s.r[4],  s.r[5],  s.r[6],  s.r[7],
+        s.r[8],  s.r[9],  s.r[10], s.r[11],
+        s.r[12], s.r[13], s.r[14], s.r[15],
+        s.pc, s.sp, s.psr.raw, s.alr, s.ahr);
+}
+
 int main(int argc, char** argv) {
     CLI::App app{"P/ECE bare-metal emulator (S1C33209)"};
     argv = app.ensure_utf8(argv);
@@ -69,9 +85,13 @@ int main(int argc, char** argv) {
         // Declared early so semihosting lambdas can capture by reference.
         uint64_t total_cycles = 0;
 
-        semihosting_init(bus, cpu, {
-            .get_cycles = [&]() -> uint64_t { return total_cycles; },
-            .set_trace  = [&](bool on) { trace = on; }
+        semihosting_init(bus, {
+            .get_cycles       = [&]() -> uint64_t { return total_cycles; },
+            .set_trace        = [&](bool on) { trace = on; },
+            .halt             = [&]() { cpu.state.in_halt = true; },
+            .snapshot_regs    = [&]() { print_reg_snapshot(cpu.state); },
+            .set_breakpoint   = [&](uint32_t addr) { cpu.breakpoints.insert(addr); },
+            .clear_breakpoint = [&](uint32_t addr) { cpu.breakpoints.erase(addr); },
         });
 
         // Peripheral initialisation

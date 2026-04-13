@@ -3,14 +3,22 @@
 #include <functional>
 
 class Bus;
-class Cpu;
 
 // Optional callbacks provided by the main loop to extend semihosting.
+// All fields may be null; unconfigured features are silently ignored.
 struct SemiConfig {
-    // Returns the current emulated CPU cycle count.  May be null.
-    std::function<uint64_t()> get_cycles;
-    // Called with true to enable instruction tracing, false to disable.  May be null.
-    std::function<void(bool)> set_trace;
+    // Returns the current emulated CPU cycle count.
+    std::function<uint64_t()>     get_cycles;
+    // Called with true to enable instruction tracing, false to disable.
+    std::function<void(bool)>     set_trace;
+    // Halt the CPU (e.g. cpu.state.in_halt = true).
+    std::function<void()>         halt;
+    // Dump all CPU registers to stderr (called by REG_SNAPSHOT and BKPT hit).
+    std::function<void()>         snapshot_regs;
+    // Insert a software breakpoint at the given address.
+    std::function<void(uint32_t)> set_breakpoint;
+    // Remove a software breakpoint at the given address.
+    std::function<void(uint32_t)> clear_breakpoint;
 };
 
 // Register semihosting I/O handlers on the bus at 0x060000.
@@ -29,7 +37,7 @@ struct SemiConfig {
 //   +0x24  HOST_TIME_MS   (R)  host wall-clock time in milliseconds (read as two 16-bit reads)
 //
 // All other reads from the semihosting range return 0.
-void semihosting_init(Bus& bus, Cpu& cpu, SemiConfig cfg = {});
+void semihosting_init(Bus& bus, SemiConfig cfg = {});
 
 // Returns -1 if TEST_RESULT not yet written, 0 for PASS, non-zero for FAIL code.
 int semihosting_test_result();

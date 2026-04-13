@@ -1,6 +1,5 @@
 #include "semihosting.hpp"
 #include "bus.hpp"
-#include "cpu.hpp"
 
 #include <chrono>
 #include <cstdio>
@@ -16,9 +15,12 @@ static constexpr uint32_t SEMI_BASE = 0x060000;
 // Internal state captured by I/O lambdas.
 struct SemiState {
     Bus*  bus = nullptr;
-    Cpu*  cpu = nullptr;
-    std::function<uint64_t()> get_cycles;
-    std::function<void(bool)> set_trace;
+    std::function<uint64_t()>     get_cycles;
+    std::function<void(bool)>     set_trace;
+    std::function<void()>         halt;
+    std::function<void()>         snapshot_regs;
+    std::function<void(uint32_t)> set_breakpoint;
+    std::function<void(uint32_t)> clear_breakpoint;
 
     uint16_t str_addr_lo  = 0;   // latched low 16 bits of CONSOLE_STR address
     uint16_t bkpt_set_lo  = 0;   // latched low 16 bits of BKPT_SET address
@@ -30,30 +32,16 @@ struct SemiState {
 
 static SemiState* g_semi = nullptr; // singleton for lambda capture
 
-// Print all CPU registers to stderr (used by REG_SNAPSHOT and BKPT hit).
-static void print_reg_snapshot(const CpuState& s) {
-    std::fprintf(stderr,
-        "[SNAPSHOT] Registers:\n"
-        "  R 0=%08X  R 1=%08X  R 2=%08X  R 3=%08X\n"
-        "  R 4=%08X  R 5=%08X  R 6=%08X  R 7=%08X\n"
-        "  R 8=%08X  R 9=%08X  R10=%08X  R11=%08X\n"
-        "  R12=%08X  R13=%08X  R14=%08X  R15=%08X\n"
-        "   PC=%08X   SP=%08X  PSR=%08X\n"
-        "  ALR=%08X  AHR=%08X\n",
-        s.r[0],  s.r[1],  s.r[2],  s.r[3],
-        s.r[4],  s.r[5],  s.r[6],  s.r[7],
-        s.r[8],  s.r[9],  s.r[10], s.r[11],
-        s.r[12], s.r[13], s.r[14], s.r[15],
-        s.pc, s.sp, s.psr.raw, s.alr, s.ahr);
-}
-
-void semihosting_init(Bus& bus, Cpu& cpu, SemiConfig cfg) {
+void semihosting_init(Bus& bus, SemiConfig cfg) {
     static SemiState state;
-    state       = SemiState{};
-    state.bus   = &bus;
-    state.cpu   = &cpu;
-    state.get_cycles = std::move(cfg.get_cycles);
-    state.set_trace  = std::move(cfg.set_trace);
+    state                  = SemiState{};
+    state.bus              = &bus;
+    state.get_cycles       = std::move(cfg.get_cycles);
+    state.set_trace        = std::move(cfg.set_trace);
+    state.halt             = std::move(cfg.halt);
+    state.snapshot_regs    = std::move(cfg.snapshot_regs);
+    state.set_breakpoint   = std::move(cfg.set_breakpoint);
+    state.clear_breakpoint = std::move(cfg.clear_breakpoint);
     g_semi = &state;
 
     // -----------------------------------------------------------------------
@@ -111,7 +99,7 @@ void semihosting_init(Bus& bus, Cpu& cpu, SemiConfig cfg) {
         [](uint32_t, uint16_t val) {
             if (!g_semi) return;
             g_semi->test_result = static_cast<int>(val);
-            g_semi->cpu->state.in_halt = true;
+            if (g_semi->halt) g_semi->halt();
             if (val == 0)
                 std::fprintf(stderr, "\n[PASS]\n");
             else
@@ -173,7 +161,7 @@ void semihosting_init(Bus& bus, Cpu& cpu, SemiConfig cfg) {
     bus.register_io(SEMI_BASE + 0x14, {
         [](uint32_t) -> uint16_t { return 0; },
         [](uint32_t, uint16_t) {
-            if (g_semi) print_reg_snapshot(g_semi->cpu->state);
+            if (g_semi && g_semi->snapshot_regs) g_semi->snapshot_regs();
         }
     });
     // +0x16 high word pad
@@ -212,7 +200,7 @@ void semihosting_init(Bus& bus, Cpu& cpu, SemiConfig cfg) {
         [](uint32_t, uint16_t val) {
             if (!g_semi) return;
             uint32_t addr = (static_cast<uint32_t>(val) << 16) | g_semi->bkpt_set_lo;
-            g_semi->cpu->breakpoints.insert(addr);
+            if (g_semi->set_breakpoint) g_semi->set_breakpoint(addr);
             std::fprintf(stderr, "[BKPT] set breakpoint at 0x%06X\n", addr);
         }
     });
@@ -231,7 +219,7 @@ void semihosting_init(Bus& bus, Cpu& cpu, SemiConfig cfg) {
         [](uint32_t, uint16_t val) {
             if (!g_semi) return;
             uint32_t addr = (static_cast<uint32_t>(val) << 16) | g_semi->bkpt_clr_lo;
-            g_semi->cpu->breakpoints.erase(addr);
+            if (g_semi->clear_breakpoint) g_semi->clear_breakpoint(addr);
             std::fprintf(stderr, "[BKPT] cleared breakpoint at 0x%06X\n", addr);
         }
     });
