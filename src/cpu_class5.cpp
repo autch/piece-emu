@@ -28,26 +28,26 @@ void Cpu::h_ld_w_rd_ss(Cpu& cpu, uint16_t insn) {
 void Cpu::h_btst(Cpu& cpu, uint16_t insn) {
     Insn i{insn};
     cpu.flush_ext();
-    uint8_t byte_val = cpu.bus_.read8(cpu.state.r[i.rb()]);
+    uint8_t byte_val = cpu.bus().read8(cpu.state.r[i.rb()]);
     cpu.state.psr.set_z(!((byte_val >> i.imm3()) & 1));
 }
 void Cpu::h_bclr(Cpu& cpu, uint16_t insn) {
     Insn i{insn};
     cpu.flush_ext();
     uint32_t ea = cpu.state.r[i.rb()];
-    cpu.bus_.write8(ea, cpu.bus_.read8(ea) & ~(1u << i.imm3()));
+    cpu.bus().write8(ea, cpu.bus().read8(ea) & ~(1u << i.imm3()));
 }
 void Cpu::h_bset(Cpu& cpu, uint16_t insn) {
     Insn i{insn};
     cpu.flush_ext();
     uint32_t ea = cpu.state.r[i.rb()];
-    cpu.bus_.write8(ea, cpu.bus_.read8(ea) | (1u << i.imm3()));
+    cpu.bus().write8(ea, cpu.bus().read8(ea) | (1u << i.imm3()));
 }
 void Cpu::h_bnot(Cpu& cpu, uint16_t insn) {
     Insn i{insn};
     cpu.flush_ext();
     uint32_t ea = cpu.state.r[i.rb()];
-    cpu.bus_.write8(ea, cpu.bus_.read8(ea) ^ (1u << i.imm3()));
+    cpu.bus().write8(ea, cpu.bus().read8(ea) ^ (1u << i.imm3()));
 }
 void Cpu::h_adc(Cpu& cpu, uint16_t insn) {
     Insn i{insn};
@@ -144,8 +144,8 @@ void Cpu::h_mac(Cpu& cpu, uint16_t insn) {
     uint64_t uacc = (uint64_t(cpu.state.ahr) << 32) | cpu.state.alr;
 
     for (uint32_t k = count; k > 0; k--) {
-        int16_t h1 = static_cast<int16_t>(cpu.bus_.read16(cpu.state.r[r1_n]));
-        int16_t h2 = static_cast<int16_t>(cpu.bus_.read16(cpu.state.r[r2_n]));
+        int16_t h1 = static_cast<int16_t>(cpu.bus().read16(cpu.state.r[r1_n]));
+        int16_t h2 = static_cast<int16_t>(cpu.bus().read16(cpu.state.r[r2_n]));
         int64_t prod = int64_t(h1) * int64_t(h2);
 
         uint64_t uprod = static_cast<uint64_t>(prod);

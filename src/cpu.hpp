@@ -137,7 +137,10 @@ public:
     // no < 16: non-maskable; no >= 16: maskable (checks IE, IL).
     void assert_trap(int no, int level);
 
-    // ---- EXT helpers (public so static handler functions can call them) ----
+    // ---- Bus and EXT helpers (public so static handler functions can call them) ----
+    Bus& bus() { return bus_; }
+
+
     // Zero-extend imm, combine with pending EXT (unsigned result)
     uint32_t ext_imm(uint32_t imm, int width) const;
     // Sign-extend at combined bit width

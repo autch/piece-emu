@@ -25,13 +25,13 @@ static void do_load_sp(Cpu& cpu, uint16_t insn) {
     uint32_t ea = sp_ea(cpu, insn, Size); cpu.flush_ext();
     uint32_t val;
     if constexpr (Size == 1) {
-        val = cpu.bus_.read8(ea);
+        val = cpu.bus().read8(ea);
         if constexpr (SignExtend) val = static_cast<uint32_t>(static_cast<int8_t>(val));
     } else if constexpr (Size == 2) {
-        val = cpu.bus_.read16(ea);
+        val = cpu.bus().read16(ea);
         if constexpr (SignExtend) val = static_cast<uint32_t>(static_cast<int16_t>(val));
     } else {
-        val = cpu.bus_.read32(ea);
+        val = cpu.bus().read32(ea);
     }
     cpu.state.r[Insn{insn}.rd()] = val;
 }
@@ -40,9 +40,9 @@ template<int Size>
 static void do_store_sp(Cpu& cpu, uint16_t insn) {
     uint32_t ea = sp_ea(cpu, insn, Size); cpu.flush_ext();
     uint32_t src = cpu.state.r[Insn{insn}.rd()];
-    if constexpr (Size == 1)      cpu.bus_.write8 (ea, static_cast<uint8_t> (src));
-    else if constexpr (Size == 2) cpu.bus_.write16(ea, static_cast<uint16_t>(src));
-    else                          cpu.bus_.write32(ea,                        src);
+    if constexpr (Size == 1)      cpu.bus().write8 (ea, static_cast<uint8_t> (src));
+    else if constexpr (Size == 2) cpu.bus().write16(ea, static_cast<uint16_t>(src));
+    else                          cpu.bus().write32(ea,                        src);
 }
 
 // ============================================================================

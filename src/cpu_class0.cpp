@@ -37,7 +37,7 @@ void Cpu::h_pushn(Cpu& cpu, uint16_t insn) {
     int rs_n = Insn{insn}.rd();
     for (int i = rs_n; i >= 0; i--) {
         cpu.state.sp -= 4;
-        cpu.bus_.write32(cpu.state.sp, cpu.state.r[i]);
+        cpu.bus().write32(cpu.state.sp, cpu.state.r[i]);
     }
 }
 
@@ -45,7 +45,7 @@ void Cpu::h_popn(Cpu& cpu, uint16_t insn) {
     cpu.flush_ext();
     int rd_n = Insn{insn}.rd();
     for (int i = 0; i <= rd_n; i++) {
-        cpu.state.r[i] = cpu.bus_.read32(cpu.state.sp);
+        cpu.state.r[i] = cpu.bus().read32(cpu.state.sp);
         cpu.state.sp += 4;
     }
 }
@@ -58,8 +58,8 @@ void Cpu::h_brk(Cpu& cpu, uint16_t) {
 void Cpu::h_retd(Cpu& cpu, uint16_t) {
     // ret.d: delayed return — pops PSR and PC, executes delay slot, then jumps
     cpu.flush_ext();
-    uint32_t ret_addr = cpu.bus_.read32(cpu.state.sp); cpu.state.sp += 4;
-    cpu.state.psr.raw = cpu.bus_.read32(cpu.state.sp); cpu.state.sp += 4;
+    uint32_t ret_addr = cpu.bus().read32(cpu.state.sp); cpu.state.sp += 4;
+    cpu.state.psr.raw = cpu.bus().read32(cpu.state.sp); cpu.state.sp += 4;
     cpu.state.in_delay_slot = true;
     cpu.state.delay_target  = ret_addr;
 }
@@ -72,8 +72,8 @@ void Cpu::h_int(Cpu& cpu, uint16_t insn) {
 
 void Cpu::h_reti(Cpu& cpu, uint16_t) {
     cpu.flush_ext();
-    cpu.state.psr.raw = cpu.bus_.read32(cpu.state.sp); cpu.state.sp += 4;
-    uint32_t ret_addr = cpu.bus_.read32(cpu.state.sp); cpu.state.sp += 4;
+    cpu.state.psr.raw = cpu.bus().read32(cpu.state.sp); cpu.state.sp += 4;
+    uint32_t ret_addr = cpu.bus().read32(cpu.state.sp); cpu.state.sp += 4;
     cpu.state.pc = ret_addr;
 }
 
@@ -85,7 +85,7 @@ void Cpu::h_call_rb(Cpu& cpu, uint16_t insn) {
     uint32_t target = cpu.state.r[rb_n];
     uint32_t ret_addr = cpu.state.pc + (delayed ? 2 : 0);
     cpu.state.sp -= 4;
-    cpu.bus_.write32(cpu.state.sp, ret_addr);
+    cpu.bus().write32(cpu.state.sp, ret_addr);
     if (delayed) cpu.state.delay_caller = 2;
     do_c0_jump(cpu, target, delayed);
 }
@@ -93,7 +93,7 @@ void Cpu::h_call_rb(Cpu& cpu, uint16_t insn) {
 void Cpu::h_ret(Cpu& cpu, uint16_t insn) {
     cpu.flush_ext();
     bool delayed = Insn{insn}.d();
-    uint32_t target = cpu.bus_.read32(cpu.state.sp); cpu.state.sp += 4;
+    uint32_t target = cpu.bus().read32(cpu.state.sp); cpu.state.sp += 4;
     if (delayed) cpu.state.delay_caller = 1;
     do_c0_jump(cpu, target, delayed);
 }
@@ -159,7 +159,7 @@ void Cpu::h_call_simm8(Cpu& cpu, uint16_t insn) {
     bool delayed = i.d();
     uint32_t ret_addr = cpu.state.pc + (delayed ? 2 : 0);
     cpu.state.sp -= 4;
-    cpu.bus_.write32(cpu.state.sp, ret_addr);
+    cpu.bus().write32(cpu.state.sp, ret_addr);
     if (delayed) cpu.state.delay_caller = 2;
     do_c0_jump(cpu, target, delayed);
 }

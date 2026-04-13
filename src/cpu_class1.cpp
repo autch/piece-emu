@@ -22,13 +22,13 @@ static void do_load_rb(Cpu& cpu, uint16_t insn) {
     uint32_t ea   = cpu.state.r[i.rb()] + disp;
     uint32_t val;
     if constexpr (Size == 1) {
-        val = cpu.bus_.read8(ea);
+        val = cpu.bus().read8(ea);
         if constexpr (SignExtend) val = static_cast<uint32_t>(static_cast<int8_t>(val));
     } else if constexpr (Size == 2) {
-        val = cpu.bus_.read16(ea);
+        val = cpu.bus().read16(ea);
         if constexpr (SignExtend) val = static_cast<uint32_t>(static_cast<int16_t>(val));
     } else {
-        val = cpu.bus_.read32(ea);
+        val = cpu.bus().read32(ea);
     }
     cpu.state.r[i.rd()] = val;
     if constexpr (PostInc) cpu.state.r[i.rb()] += Size;
@@ -39,9 +39,9 @@ static void do_store_rb(Cpu& cpu, uint16_t insn) {
     Insn i{insn};
     uint32_t disp = cpu.ext_rb(); cpu.flush_ext();
     uint32_t ea   = cpu.state.r[i.rb()] + disp;
-    if constexpr (Size == 1)      cpu.bus_.write8 (ea, static_cast<uint8_t> (cpu.state.r[i.rd()]));
-    else if constexpr (Size == 2) cpu.bus_.write16(ea, static_cast<uint16_t>(cpu.state.r[i.rd()]));
-    else                          cpu.bus_.write32(ea,                        cpu.state.r[i.rd()]);
+    if constexpr (Size == 1)      cpu.bus().write8 (ea, static_cast<uint8_t> (cpu.state.r[i.rd()]));
+    else if constexpr (Size == 2) cpu.bus().write16(ea, static_cast<uint16_t>(cpu.state.r[i.rd()]));
+    else                          cpu.bus().write32(ea,                        cpu.state.r[i.rd()]);
     if constexpr (PostInc) cpu.state.r[i.rb()] += Size;
 }
 
@@ -78,96 +78,26 @@ void Cpu::h_st_w_rbx_rs (Cpu& cpu, uint16_t insn) { do_store_rb<4, true>(cpu, in
 
 // EXT 3-operand form: when EXT prefix is present, rd ← rs op imm13/imm26.
 // Without EXT:        rd ← rd op rs  (2-operand form).
-void Cpu::h_add_rd_rs(Cpu& cpu, uint16_t insn) {
+// HasExt3Op = false for ld.w and not, which do not support the EXT 3-operand form.
+template<AluOp Op, bool HasExt3Op = true>
+static void do_alu_rr(Cpu& cpu, uint16_t insn) {
     Insn i{insn};
-    if (cpu.state.pending_ext_count) {
-        uint32_t imm = cpu.ext_rb(); cpu.flush_ext();
-        uint32_t a = cpu.state.r[i.rs()];
-        uint64_t r = uint64_t(a) + imm;
-        cpu.state.r[i.rd()] = uint32_t(r);
-        cpu.state.psr.set_nzvc_add(a, imm, r);
-    } else {
-        cpu.flush_ext();
-        uint32_t a = cpu.state.r[i.rd()], b = cpu.state.r[i.rs()];
-        uint64_t r = uint64_t(a) + b;
-        cpu.state.r[i.rd()] = uint32_t(r);
-        cpu.state.psr.set_nzvc_add(a, b, r);
+    if constexpr (HasExt3Op) {
+        if (cpu.state.pending_ext_count) {
+            uint32_t b = cpu.ext_rb(); cpu.flush_ext();
+            do_alu<Op>(cpu, cpu.state.r[i.rs()], b, i.rd());
+            return;
+        }
     }
-}
-void Cpu::h_sub_rd_rs(Cpu& cpu, uint16_t insn) {
-    Insn i{insn};
-    if (cpu.state.pending_ext_count) {
-        uint32_t imm = cpu.ext_rb(); cpu.flush_ext();
-        uint32_t a = cpu.state.r[i.rs()];
-        uint64_t r = uint64_t(a) - imm;
-        cpu.state.r[i.rd()] = uint32_t(r);
-        cpu.state.psr.set_nzvc_sub(a, imm, r);
-    } else {
-        cpu.flush_ext();
-        uint32_t a = cpu.state.r[i.rd()], b = cpu.state.r[i.rs()];
-        uint64_t r = uint64_t(a) - b;
-        cpu.state.r[i.rd()] = uint32_t(r);
-        cpu.state.psr.set_nzvc_sub(a, b, r);
-    }
-}
-void Cpu::h_cmp_rd_rs(Cpu& cpu, uint16_t insn) {
-    Insn i{insn};
-    if (cpu.state.pending_ext_count) {
-        uint32_t imm = cpu.ext_rb(); cpu.flush_ext();
-        uint32_t a = cpu.state.r[i.rs()];
-        uint64_t r = uint64_t(a) - imm;
-        cpu.state.psr.set_nzvc_sub(a, imm, r);
-    } else {
-        cpu.flush_ext();
-        uint32_t a = cpu.state.r[i.rd()], b = cpu.state.r[i.rs()];
-        uint64_t r = uint64_t(a) - b;
-        cpu.state.psr.set_nzvc_sub(a, b, r);
-    }
-}
-void Cpu::h_ld_w_rd_rs(Cpu& cpu, uint16_t insn) {
-    Insn i{insn};
     cpu.flush_ext();
-    cpu.state.r[i.rd()] = cpu.state.r[i.rs()];
+    do_alu<Op>(cpu, cpu.state.r[i.rd()], cpu.state.r[i.rs()], i.rd());
 }
-void Cpu::h_and_rd_rs(Cpu& cpu, uint16_t insn) {
-    Insn i{insn};
-    if (cpu.state.pending_ext_count) {
-        uint32_t imm = cpu.ext_rb(); cpu.flush_ext();
-        uint32_t r = cpu.state.r[i.rs()] & imm;
-        cpu.state.r[i.rd()] = r; cpu.state.psr.set_nz(r);
-    } else {
-        cpu.flush_ext();
-        uint32_t r = cpu.state.r[i.rd()] & cpu.state.r[i.rs()];
-        cpu.state.r[i.rd()] = r; cpu.state.psr.set_nz(r);
-    }
-}
-void Cpu::h_or_rd_rs(Cpu& cpu, uint16_t insn) {
-    Insn i{insn};
-    if (cpu.state.pending_ext_count) {
-        uint32_t imm = cpu.ext_rb(); cpu.flush_ext();
-        uint32_t r = cpu.state.r[i.rs()] | imm;
-        cpu.state.r[i.rd()] = r; cpu.state.psr.set_nz(r);
-    } else {
-        cpu.flush_ext();
-        uint32_t r = cpu.state.r[i.rd()] | cpu.state.r[i.rs()];
-        cpu.state.r[i.rd()] = r; cpu.state.psr.set_nz(r);
-    }
-}
-void Cpu::h_xor_rd_rs(Cpu& cpu, uint16_t insn) {
-    Insn i{insn};
-    if (cpu.state.pending_ext_count) {
-        uint32_t imm = cpu.ext_rb(); cpu.flush_ext();
-        uint32_t r = cpu.state.r[i.rs()] ^ imm;
-        cpu.state.r[i.rd()] = r; cpu.state.psr.set_nz(r);
-    } else {
-        cpu.flush_ext();
-        uint32_t r = cpu.state.r[i.rd()] ^ cpu.state.r[i.rs()];
-        cpu.state.r[i.rd()] = r; cpu.state.psr.set_nz(r);
-    }
-}
-void Cpu::h_not_rd_rs(Cpu& cpu, uint16_t insn) {
-    Insn i{insn};
-    cpu.flush_ext();  // EXT not allowed on not %rd, %rs
-    uint32_t r = ~cpu.state.r[i.rs()];
-    cpu.state.r[i.rd()] = r; cpu.state.psr.set_nz(r);
-}
+
+void Cpu::h_add_rd_rs  (Cpu& cpu, uint16_t insn) { do_alu_rr<AluOp::ADD       >(cpu, insn); }
+void Cpu::h_sub_rd_rs  (Cpu& cpu, uint16_t insn) { do_alu_rr<AluOp::SUB       >(cpu, insn); }
+void Cpu::h_cmp_rd_rs  (Cpu& cpu, uint16_t insn) { do_alu_rr<AluOp::CMP       >(cpu, insn); }
+void Cpu::h_ld_w_rd_rs (Cpu& cpu, uint16_t insn) { do_alu_rr<AluOp::MOV, false>(cpu, insn); }
+void Cpu::h_and_rd_rs  (Cpu& cpu, uint16_t insn) { do_alu_rr<AluOp::AND       >(cpu, insn); }
+void Cpu::h_or_rd_rs   (Cpu& cpu, uint16_t insn) { do_alu_rr<AluOp::OR        >(cpu, insn); }
+void Cpu::h_xor_rd_rs  (Cpu& cpu, uint16_t insn) { do_alu_rr<AluOp::XOR       >(cpu, insn); }
+void Cpu::h_not_rd_rs  (Cpu& cpu, uint16_t insn) { do_alu_rr<AluOp::NOT, false>(cpu, insn); }
