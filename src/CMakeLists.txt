@@ -14,48 +14,34 @@ find_package(GTest QUIET)
 find_package(CLI11 CONFIG REQUIRED)
 
 # ---------------------------------------------------------------------------
-# libpiece_core — shared emulation core (no external dependencies)
+# Library layers
+#
+#   piece_core   — S1C33000 CPU + BCU + Diag (no POSIX, no SDL)
+#   piece_soc    — S1C33209 on-chip peripherals (→ piece_core)
+#   piece_board  — P/ECE board-level external devices (→ piece_soc, INTERFACE only for now)
+#   piece_debug  — ELF loader, semihosting, GDB RSP (POSIX) (→ piece_core)
+#   piece_host   — SDL3 LCD/audio/input frontend (future, see host/CMakeLists.txt)
 # ---------------------------------------------------------------------------
-add_library(piece_core STATIC
-    diag.cpp
-    cpu_core.cpp
-    cpu_class0.cpp
-    cpu_class1.cpp
-    cpu_class2.cpp
-    cpu_class3.cpp
-    cpu_class4.cpp
-    cpu_class5.cpp
-    cpu_class6.cpp
-    cpu_dispatch.cpp
-    cpu_disasm.cpp
-    bus.cpp
-    elf_loader.cpp
-    semihosting.cpp
-    gdb_rsp.cpp
-    gdb_rsp_regs.cpp
-    peripheral_intc.cpp
-    peripheral_clkctl.cpp
-    peripheral_t8.cpp
-    peripheral_t16.cpp
-    peripheral_portctrl.cpp
-    peripheral_bcu_area.cpp
-    peripheral_wdt.cpp
-    peripheral_rtc.cpp
-)
-
-target_include_directories(piece_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+add_subdirectory(core)
+add_subdirectory(soc)
+add_subdirectory(board)
+add_subdirectory(debug)
+add_subdirectory(host)
 
 # ---------------------------------------------------------------------------
 # piece-emu — bare-metal / headless CLI frontend (POSIX only, no SDL)
 # ---------------------------------------------------------------------------
-add_executable(piece-emu
-    main.cpp
+add_executable(piece-emu main.cpp)
+target_link_libraries(piece-emu PRIVATE
+    piece_debug
+    piece_board
+    piece_soc
+    piece_core
+    CLI11::CLI11
 )
 
-target_link_libraries(piece-emu PRIVATE piece_core CLI11::CLI11)
-
 # ---------------------------------------------------------------------------
-# 第1層・第2層: C++ unit tests (Google Test via vcpkg)
+# Unit tests (Google Test via vcpkg)
 # ---------------------------------------------------------------------------
 if(GTest_FOUND)
     enable_testing()
@@ -74,8 +60,12 @@ if(GTest_FOUND)
         tests/unit/test_peripheral_rtc.cpp
     )
 
-    target_link_libraries(piece_unit_tests PRIVATE piece_core GTest::gtest_main)
-    target_include_directories(piece_unit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    # Tests only need soc + core (no POSIX debug layer required).
+    target_link_libraries(piece_unit_tests PRIVATE
+        piece_soc
+        piece_core
+        GTest::gtest_main
+    )
 
     include(GoogleTest)
     gtest_discover_tests(piece_unit_tests)
@@ -85,20 +75,14 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# piece-emu-system — full-system / game frontend (future; requires SDL2 + imgui)
+# piece-emu-system — full-system frontend (future; requires SDL3)
 # To enable: cmake with -DVCPKG_MANIFEST_FEATURES=system and uncomment below.
 # ---------------------------------------------------------------------------
-# find_package(SDL2 CONFIG REQUIRED)
-# find_package(imgui CONFIG REQUIRED)
-#
-# add_executable(piece-emu-system
-#     system_main.cpp
-#     frontend/lcd.cpp
-#     frontend/sound.cpp
-#     frontend/input.cpp
-# )
+# add_executable(piece-emu-system system_main.cpp)
 # target_link_libraries(piece-emu-system PRIVATE
+#     piece_host
+#     piece_board
+#     piece_soc
+#     piece_debug
 #     piece_core
-#     SDL2::SDL2
-#     imgui::imgui
 # )
