@@ -32,6 +32,7 @@ add_library(piece_core STATIC
     elf_loader.cpp
     semihosting.cpp
     gdb_rsp.cpp
+    gdb_rsp_regs.cpp
     peripheral_intc.cpp
     peripheral_clkctl.cpp
     peripheral_t8.cpp
