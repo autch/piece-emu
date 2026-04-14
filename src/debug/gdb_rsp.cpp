@@ -52,21 +52,101 @@ GdbRsp::~GdbRsp() {
 // single=true: execute exactly one instruction.
 // single=false: run until halt, fault, or a breakpoint address is hit.
 // Returns the RSP stop reply string.
+//
+// In async mode (serve_async() was used): instead of stepping the CPU
+// directly, signals the main loop via async_run_cmd_ and blocks until
+// notify_async_stopped() is called by the main loop.
 std::string GdbRsp::run(bool single) {
+    if (async_mode_) {
+        // Signal the main loop to start CPU execution.
+        async_run_cmd_.store(single ? 1 : 2);
+
+        // Block until the main loop signals that the CPU has stopped.
+        std::unique_lock<std::mutex> lk(async_mutex_);
+        async_stopped_ = false;
+        async_stopped_cv_.wait(lk, [this] { return async_stopped_; });
+        return async_stop_reply_;
+    }
+
+    // --- Synchronous (headless) mode -----------------------------------------
     cpu_.state.in_halt = false;
-    if (single) {
+    wp_hit_ = false;
+
+    auto step_one = [&]() {
+        bus_.debug_pc = cpu_.state.pc;
         cpu_.step();
+    };
+
+    if (single) {
+        step_one();
     } else {
         while (!cpu_.state.in_halt) {
-            cpu_.step();
-            // Check breakpoint after each instruction (before next fetch).
+            step_one();
+            if (wp_hit_) break;
             if (!cpu_.state.in_halt && breakpoints_.count(cpu_.state.pc))
                 break;
         }
     }
-    // Distinguish fault (undefined opcode, jp.d %rb, …) from normal stop.
-    if (cpu_.state.fault) return "T04thread:1;"; // SIGILL
-    return "T05thread:1;";                        // SIGTRAP
+
+    return make_async_stop_reply();
+}
+
+// ---------------------------------------------------------------------------
+// Async mode helpers
+// ---------------------------------------------------------------------------
+
+void GdbRsp::serve_async() {
+    async_mode_ = true;
+    async_thread_ = std::thread([this]() { serve(); });
+    async_thread_.detach();
+}
+
+// Called by the main loop: take the pending run command (if any).
+// Returns true if the RSP thread has issued a run/step request.
+// *single_out = true → step once; false → run until breakpoint/halt.
+// Resets in_halt and wp_hit_ so the CPU starts fresh.
+bool GdbRsp::take_async_run_cmd(bool* single_out) {
+    int cmd = async_run_cmd_.exchange(0);
+    if (cmd == 0) return false;
+    *single_out = (cmd == 1);
+    cpu_.state.in_halt = false;
+    wp_hit_ = false;
+    return true;
+}
+
+// Called by the main loop after the CPU stops.
+// Wakes the blocked RSP thread so it can send the stop reply to the client.
+void GdbRsp::notify_async_stopped(std::string reply) {
+    {
+        std::lock_guard<std::mutex> lk(async_mutex_);
+        async_stop_reply_ = std::move(reply);
+        async_stopped_    = true;
+    }
+    async_stopped_cv_.notify_one();
+}
+
+// Build the RSP stop reply from the current CPU / watchpoint state.
+// Used both by the synchronous run() (via refactored body) and by the
+// main loop in async mode.
+std::string GdbRsp::make_async_stop_reply() const {
+    // Fault (undefined opcode, jp.d %rb, …) → SIGILL
+    if (cpu_.state.fault) return "T04thread:1;";
+
+    // Watchpoint hit → encode stop reason and triggering address
+    if (wp_hit_) {
+        // GDB RSP stop-reason keys for watchpoints:
+        //   write access : "watch"   (Z2)
+        //   read  access : "rwatch"  (Z3)
+        //   any   access : "awatch"  (Z4)
+        static constexpr const char* wp_key[] = {
+            nullptr, nullptr, "watch", "rwatch", "awatch"
+        };
+        const char* key = (wp_hit_ztype_ >= 2 && wp_hit_ztype_ <= 4)
+                        ? wp_key[wp_hit_ztype_] : "watch";
+        return std::format("T05{}:{};thread:1;", key, to_hex32(wp_hit_addr_));
+    }
+
+    return "T05thread:1;"; // SIGTRAP — breakpoint or step complete
 }
 
 // ---------------------------------------------------------------------------
@@ -171,27 +251,64 @@ void GdbRsp::handle_packet(int fd, const std::string& pkt) {
         break;
 
     // -----------------------------------------------------------------------
-    // Z / z — set / remove breakpoint
-    // Only Z0/z0 (software breakpoints) are supported.
-    // Virtual implementation: no instruction patching; the run() loop checks
-    // the PC against the breakpoint set after every instruction.
+    // Z / z — set / remove breakpoint or watchpoint
+    //
+    //   Z0/z0  Software breakpoint  — virtual: checked after each step
+    //   Z1/z1  Hardware breakpoint  — same implementation as Z0
+    //   Z2/z2  Write watchpoint     — Bus::add/remove_watchpoint WRITE
+    //   Z3/z3  Read  watchpoint     — Bus::add/remove_watchpoint READ
+    //   Z4/z4  Access watchpoint    — Bus::add/remove_watchpoint RW
+    //
+    // Watchpoint kind field = byte count to watch (1/2/4; default 4).
     // -----------------------------------------------------------------------
 
     case 'Z': {
-        if (pkt[1] != '0') { send_rsp(""); break; } // only Z0
-        uint32_t addr = 0; unsigned kind = 0;
+        int      ztype = pkt[1] - '0';
+        uint32_t addr  = 0;
+        unsigned kind  = 0;
         std::sscanf(pkt.c_str() + 3, "%x,%x", &addr, &kind);
-        breakpoints_.insert(addr);
-        send_rsp("OK");
+        if (kind == 0) kind = 4; // default to 4-byte watch
+
+        if (ztype == Z_SW_BREAK || ztype == Z_HW_BREAK) {
+            breakpoints_.insert(addr);
+            send_rsp("OK");
+        } else if (ztype == Z_WP_WRITE) {
+            bus_.add_watchpoint(addr, kind, WpType::WRITE);
+            send_rsp("OK");
+        } else if (ztype == Z_WP_READ) {
+            bus_.add_watchpoint(addr, kind, WpType::READ);
+            send_rsp("OK");
+        } else if (ztype == Z_WP_RW) {
+            bus_.add_watchpoint(addr, kind, WpType::RW);
+            send_rsp("OK");
+        } else {
+            send_rsp(""); // unsupported type
+        }
         break;
     }
 
     case 'z': {
-        if (pkt[1] != '0') { send_rsp(""); break; } // only z0
-        uint32_t addr = 0; unsigned kind = 0;
+        int      ztype = pkt[1] - '0';
+        uint32_t addr  = 0;
+        unsigned kind  = 0;
         std::sscanf(pkt.c_str() + 3, "%x,%x", &addr, &kind);
-        breakpoints_.erase(addr);
-        send_rsp("OK");
+        if (kind == 0) kind = 4;
+
+        if (ztype == Z_SW_BREAK || ztype == Z_HW_BREAK) {
+            breakpoints_.erase(addr);
+            send_rsp("OK");
+        } else if (ztype == Z_WP_WRITE) {
+            bus_.remove_watchpoint(addr, kind, WpType::WRITE);
+            send_rsp("OK");
+        } else if (ztype == Z_WP_READ) {
+            bus_.remove_watchpoint(addr, kind, WpType::READ);
+            send_rsp("OK");
+        } else if (ztype == Z_WP_RW) {
+            bus_.remove_watchpoint(addr, kind, WpType::RW);
+            send_rsp("OK");
+        } else {
+            send_rsp("");
+        }
         break;
     }
 
@@ -235,7 +352,13 @@ void GdbRsp::handle_packet(int fd, const std::string& pkt) {
 
     case 'q':
         if (pkt.starts_with("qSupported:")) {
-            send_rsp("PacketSize=4000;qXfer:features:read+;qRegisterInfo+;vContSupported+");
+            send_rsp("PacketSize=4000"
+                     ";qXfer:features:read+"
+                     ";qRegisterInfo+"
+                     ";vContSupported+"
+                     ";hwbreak+"   // Z1/z1 hardware breakpoints
+                     ";swbreak+"   // Z0/z0 software breakpoints (stop reason)
+                     );
 
         } else if (pkt == "qAttached") {
             send_rsp("1");
@@ -301,9 +424,28 @@ void GdbRsp::serve() {
     int client = ::accept(listen_fd_, nullptr, nullptr);
     if (client < 0) return;
     std::fprintf(stderr, "GDB RSP: client connected\n");
+    if (async_mode_) async_client_active_.store(true);
     no_ack_mode_ = false;
     breakpoints_.clear();
+    bus_.clear_watchpoints();
+    wp_hit_ = false;
     cpu_.set_strict(true);   // escalate soft violations to faults while debugger is attached
+
+    // Install watchpoint callback: record first hit, then halt the CPU so
+    // run() can inspect the state and return the appropriate stop reply.
+    bus_.set_wp_callback([this](const Watchpoint& wp, uint32_t addr,
+                                uint32_t /*val*/, int /*width*/, bool /*is_write*/) {
+        if (!wp_hit_) {
+            wp_hit_      = true;
+            wp_hit_addr_ = addr;
+            switch (wp.type) {
+            case WpType::WRITE: wp_hit_ztype_ = Z_WP_WRITE; break;
+            case WpType::READ:  wp_hit_ztype_ = Z_WP_READ;  break;
+            case WpType::RW:    wp_hit_ztype_ = Z_WP_RW;    break;
+            }
+            cpu_.state.in_halt = true; // stop the run() loop after this step
+        }
+    });
 
     std::string buf;
     char tmp[256];
@@ -340,6 +482,14 @@ void GdbRsp::serve() {
         }
     }
     ::close(client);
-    cpu_.set_strict(false);  // back to warning mode after debugger disconnects
+    if (async_mode_) {
+        async_client_active_.store(false);
+        // If the RSP thread is blocked in run() waiting for a stop notification,
+        // unblock it so it can observe the disconnection.
+        notify_async_stopped("T05thread:1;");
+    }
+    cpu_.set_strict(false);      // back to warning mode after debugger disconnects
+    bus_.clear_watchpoints();    // remove any watchpoints left by the client
+    bus_.set_wp_callback({});    // restore no-op callback
     std::fprintf(stderr, "GDB RSP: client disconnected\n");
 }
