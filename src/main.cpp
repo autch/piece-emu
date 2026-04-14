@@ -19,8 +19,40 @@
 #include <CLI/CLI.hpp>
 #include <algorithm>
 #include <cstdio>
+#include <set>
 #include <stdexcept>
 #include <string>
+#include <vector>
+
+// Parse "0xADDR" or "0xADDR:SIZE" → {addr, size}.
+static std::pair<uint32_t, uint32_t> parse_addr_size(const std::string& s)
+{
+    auto colon = s.find(':');
+    uint32_t addr = static_cast<uint32_t>(
+        std::stoul(s.substr(0, colon), nullptr, 0));
+    uint32_t size = 4;
+    if (colon != std::string::npos)
+        size = static_cast<uint32_t>(
+            std::stoul(s.substr(colon + 1), nullptr, 0));
+    return {addr, size};
+}
+
+static WpCallback make_wp_callback(const Bus& bus)
+{
+    return [&bus](const Watchpoint& /*wp*/, uint32_t addr, uint32_t val,
+                  int width, bool is_write) {
+        std::fprintf(stderr,
+            "[WP-%s] PC=0x%06X  addr=0x%06X  val=0x%0*X  width=%d",
+            is_write ? "WRITE" : "READ",
+            bus.debug_pc, addr, width * 2, val, width);
+        if (is_write) {
+            uint32_t prev = bus.shadow_last_writer(addr);
+            if (prev != 0xFFFF'FFFFu)
+                std::fprintf(stderr, "  prev_writer=0x%06X", prev);
+        }
+        std::fprintf(stderr, "\n");
+    };
+}
 
 static void print_reg_snapshot(const CpuState& s) {
     std::fprintf(stderr,
@@ -42,15 +74,17 @@ int main(int argc, char** argv) {
     CLI::App app{"P/ECE emulator (S1C33209)"};
     argv = app.ensure_utf8(argv);
 
-    std::string  elf_path;
-    std::string  pfi_path;
-    bool         use_gdb   = false;
-    uint16_t     gdb_port  = 1234;
-    bool         debug_rsp = false;
-    uint64_t     max_cycles = 0;
-    bool         trace      = false;
-    std::size_t  sram_size  = 0x040000; // 256 KB
-    std::size_t  flash_size = 0x080000; // 512 KB
+    std::string              elf_path;
+    std::string              pfi_path;
+    bool                     use_gdb    = false;
+    uint16_t                 gdb_port   = 1234;
+    bool                     debug_rsp  = false;
+    uint64_t                 max_cycles = 0;
+    bool                     trace      = false;
+    std::size_t              sram_size  = 0x040000; // 256 KB
+    std::size_t              flash_size = 0x080000; // 512 KB
+    std::vector<std::string> wp_write_specs, wp_read_specs, wp_rw_specs;
+    std::vector<std::string> break_specs;
 
     // Exactly one of --pfi or elf must be provided.
     auto* elf_opt = app.add_option("elf", elf_path, "ELF binary to load and run")
@@ -79,6 +113,14 @@ int main(int argc, char** argv) {
     app.add_option("--flash-size", flash_size,
         "External Flash size in bytes (default: 524288 = 512 KB; "
         "use 1048576 for 1 MB or 2097152 for 2 MB Flash-modded P/ECE)");
+    app.add_option("--wp-write", wp_write_specs,
+        "Write watchpoint: ADDR or ADDR:SIZE (hex, repeatable)");
+    app.add_option("--wp-read",  wp_read_specs,
+        "Read watchpoint: ADDR or ADDR:SIZE (hex, repeatable)");
+    app.add_option("--wp-rw",    wp_rw_specs,
+        "Read/write watchpoint: ADDR or ADDR:SIZE (hex, repeatable)");
+    app.add_option("--break-at", break_specs,
+        "Dump registers when PC == ADDR (hex, repeatable)");
 
     CLI11_PARSE(app, argc, argv);
 
@@ -89,6 +131,26 @@ int main(int argc, char** argv) {
         StderrDiagSink diag_sink;
         cpu.set_diag(&diag_sink);
         bus.set_diag(&diag_sink);
+
+        // ---- Debug: watchpoints & break-at ----------------------------------
+        for (auto& s : wp_write_specs) {
+            auto [a, sz] = parse_addr_size(s);
+            bus.add_watchpoint(a, sz, WpType::WRITE);
+        }
+        for (auto& s : wp_read_specs) {
+            auto [a, sz] = parse_addr_size(s);
+            bus.add_watchpoint(a, sz, WpType::READ);
+        }
+        for (auto& s : wp_rw_specs) {
+            auto [a, sz] = parse_addr_size(s);
+            bus.add_watchpoint(a, sz, WpType::RW);
+        }
+        bus.set_wp_callback(make_wp_callback(bus));
+
+        std::set<uint32_t> break_addrs;
+        for (auto& s : break_specs)
+            break_addrs.insert(static_cast<uint32_t>(std::stoul(s, nullptr, 0)));
+        // ---------------------------------------------------------------------
 
         // Declared early so semihosting lambdas can capture by reference.
         uint64_t total_cycles = 0;
@@ -178,6 +240,11 @@ int main(int argc, char** argv) {
                 if (trace) {
                     std::string dis = cpu.disasm(cpu.state.pc);
                     std::fprintf(stderr, "  %s\n", dis.c_str());
+                }
+                bus.debug_pc = cpu.state.pc;
+                if (!break_addrs.empty() && break_addrs.count(cpu.state.pc)) {
+                    std::fprintf(stderr, "[BREAK] PC=0x%06X\n", cpu.state.pc);
+                    print_reg_snapshot(cpu.state);
                 }
                 total_cycles += cpu.step();
                 tick_all(total_cycles);
