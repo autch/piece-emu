@@ -36,6 +36,7 @@ add_subdirectory(soc)
 add_subdirectory(board)
 add_subdirectory(debug)
 add_subdirectory(host)
+add_subdirectory(tools)
 
 # ---------------------------------------------------------------------------
 # piece-emu — bare-metal / headless CLI frontend (POSIX only, no SDL)
