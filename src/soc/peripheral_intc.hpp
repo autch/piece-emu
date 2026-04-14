@@ -89,6 +89,6 @@ private:
     void try_deliver(IrqSource src);
 
     // I/O handlers
-    uint16_t io_read(uint32_t addr);
-    void     io_write(uint32_t addr, uint16_t val);
+    uint16_t io_read(uint32_t off);
+    void     io_write(uint32_t off, uint32_t addr, uint16_t val);
 };

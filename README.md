@@ -1,11 +1,13 @@
 # piece-emu — Aquaplus P/ECE Diagnostic Emulator
 
 実機なら黙って流す怪しい動作を積極的に検出する、アクアプラス P/ECE（EPSON S1C33209 SoC）向けの diagnostic エミュレータです。
-GDB RSP とセミホスティングにより、コンパイラ開発のデバッグ基盤として機能します。ゲームの動作はまだサポートしていません。
+GDB RSP とセミホスティングにより、コンパイラ開発のデバッグ基盤として機能します。
+P2-1 フェーズ実装済み：PFI フラッシュイメージからのフルシステムブートに対応し、MMC カーネルが AppStart まで到達することを確認済み。
 
 A diagnostic S1C33209 emulator for the Aquaplus P/ECE handheld.
 Catches dubious-but-silently-ignored patterns that real hardware would let slip.
-GDB RSP + semihosting for compiler development. No game support yet.
+GDB RSP + semihosting for compiler development.
+P2-1 complete: full-system boot from PFI flash image; MMC kernel reaches AppStart.
 
 ---
 
@@ -17,7 +19,7 @@ GDB RSP + semihosting for compiler development. No game support yet.
 | ターゲットデバイス | Aquaplus P/ECE |
 | 言語 | C++20 |
 | ビルドシステム | CMake + Ninja |
-| ステータス | **P1 フェーズ実装済み** — 全命令・周辺デバイス・GDB RSP・セミホスティング・HLT/SLEEP 高速スキップ |
+| ステータス | **P2-1 フェーズ実装済み** — 全命令・周辺デバイス・GDB RSP・セミホスティング・HLT/SLEEP 高速スキップ・PFI ブート・カーネル AppStart 到達確認 |
 
 ### 設計方針 / Design Philosophy
 
@@ -56,8 +58,10 @@ All ISA classes (0–6) implemented. Includes disassembler, PSR flags, EXT immed
 | Timer16bit × 6 | 0x048180– | PRUN/PRESET/CRA/CRB 比較、SELFM、`next_wake_cycle()` |
 | PortCtrl | 0x0402C0– | K5/K6 入力、P ポート出力、P07→ClkCtl 通知、KEY IRQ |
 | BcuAreaCtrl | 0x040020 | トラップテーブルベースレジスタ（TTBR）書き込み |
-| WDT（ウォッチドッグ）| 0x040180 | レジスタ受け付け（タイムアウト IRQ は未実装）|
+| WDT（ウォッチドッグ）| 0x040170 | NMI 発火（1 ms 周期）、ClockTicks インクリメント経路 |
 | RTC（計時タイマ）| 0x040150 | 1 Hz クロックフラグ（rRTCSEL bit3）トグル、GetSysClock() 対応 |
+| SIF3（シリアル I/F）| 0x0401F4 | TXD/STATUS/CTL レジスタ、HSDMA Ch0 インライン DMA |
+| HSDMA（高速 DMA）| 0x048220 | 4 チャネル、Ch0 = LCD 転送（SIF3 連動）、Ch1 = サウンド転送コールバック |
 
 ### HLT/SLEEP 高速スキップ / Fast-forward on HLT ✅
 
@@ -116,11 +120,14 @@ piece-emu/
 │   │   ├── peripheral_bcu_area.cpp/hpp BCU エリア制御（TTBR）
 │   │   ├── peripheral_wdt.cpp/hpp  ウォッチドッグタイマ / Watchdog timer
 │   │   ├── peripheral_rtc.cpp/hpp  計時タイマ（RTC）/ Real-time clock
+│   │   ├── peripheral_sif3.cpp/hpp SIF3 シリアル I/F（LCD 転送、HSDMA 連動）
+│   │   ├── peripheral_hsdma.cpp/hpp HSDMA 高速 DMA（4 チャネル）
 │   │   └── CMakeLists.txt
 │   ├── board/                      piece_board (INTERFACE) — 外付けデバイス（将来）
 │   │   └── CMakeLists.txt          S6B0741 LCD / NAND Flash / PDIUSBD12 USB (未実装)
 │   ├── debug/                      libpiece_debug.a — ELF ローダ / セミホスティング / GDB RSP
 │   │   ├── elf_loader.cpp          ELF ローダ / ELF loader
+│   │   ├── pfi_loader.cpp/hpp      PFI フラッシュイメージローダ / PFI flash image loader
 │   │   ├── semihosting.cpp         セミホスティング（全ポート実装済み）
 │   │   ├── gdb_rsp.cpp             GDB RSP スタブ / GDB RSP stub
 │   │   ├── gdb_rsp_regs.cpp        GDB レジスタアクセス層 / Register access layer
@@ -131,7 +138,7 @@ piece-emu/
 │   ├── CMakeLists.txt
 │   ├── vcpkg.json                  依存ライブラリ（GTest, CLI11）/ Dependencies
 │   └── tests/
-│       ├── unit/                   C++ ユニットテスト（GTest）149 テスト
+│       ├── unit/                   C++ ユニットテスト（GTest）158 テスト
 │       │   ├── test_cpu_instructions.cpp
 │       │   ├── test_disasm.cpp
 │       │   ├── test_ext_imm.cpp
@@ -142,7 +149,8 @@ piece-emu/
 │       │   ├── test_peripheral_t8.cpp
 │       │   ├── test_peripheral_t16.cpp
 │       │   ├── test_peripheral_portctrl.cpp
-│       │   └── test_peripheral_rtc.cpp
+│       │   ├── test_peripheral_rtc.cpp
+│       │   └── test_peripheral_sif3.cpp
 │       └── bare_metal/             S1C33 ベアメタルテスト（LLVM ツールチェーン使用）
 │           ├── semihosting.h       セミホスティングヘルパ（`semi_*` 関数群）
 │           ├── piece_emu_debug.h   デバッグポートヘルパ（`EMU_*` マクロ）
@@ -204,6 +212,9 @@ ninja -C build-src
 # ベアメタル ELF を実行（終了コード 0=PASS）
 ./build-src/piece-emu test.elf
 
+# PFI フラッシュイメージからフルシステムブート
+./build-src/piece-emu --pfi piece.pfi
+
 # 逆アセンブルトレース付きで実行
 ./build-src/piece-emu --trace test.elf
 
@@ -238,9 +249,9 @@ lldb
 ninja -C build-src test
 ```
 
-149 テストが通過します。CPU 命令・逆アセンブラ・PSR フラグ・BCU・INTC・T8・T16・PortCtrl・RTC を網羅。
+158 テストが通過します。CPU 命令・逆アセンブラ・PSR フラグ・BCU・INTC・T8・T16・PortCtrl・RTC・SIF3/HSDMA を網羅。
 
-149 tests pass. Covers CPU instructions, disassembler, PSR flags, BCU, INTC, T8, T16, PortCtrl, and RTC.
+158 tests pass. Covers CPU instructions, disassembler, PSR flags, BCU, INTC, T8, T16, PortCtrl, RTC, SIF3, and HSDMA.
 
 ### ベアメタルテスト / Bare-metal Tests
 
@@ -266,10 +277,10 @@ cd src/tests/bare_metal && make && make run
 
 | ファイル | 内容 |
 |---|---|
-| [`PIECE_EMULATOR_DESIGN.md`](PIECE_EMULATOR_DESIGN.md) | 設計仕様（CPU・周辺デバイス・GDB RSP・セミホスティング・テスト方針）|
+| [`PIECE_EMULATOR_DESIGN.md`](PIECE_EMULATOR_DESIGN.md) | 設計仕様（CPU・周辺デバイス・EXT 不可分性・GDB RSP・セミホスティング・テスト方針）|
 | [`docs/s1c33000_quick_reference.md`](docs/s1c33000_quick_reference.md) | S1C33000 命令セット・エンコーディング・レジスタ早見表 |
-| [`docs/peripheral-implementation-status.md`](docs/peripheral-implementation-status.md) | 周辺デバイス実装状況・レジスタマップ・既知の落とし穴 |
-| [`docs/kernel-source-reference.md`](docs/kernel-source-reference.md) | カーネルソース要点（ブートシーケンス・GetSysClock・割り込み処理）|
+| [`docs/peripheral-implementation-status.md`](docs/peripheral-implementation-status.md) | 周辺デバイス実装状況・レジスタマップ・既知の落とし穴（P1 フェーズ）|
+| [`docs/kernel-source-reference.md`](docs/kernel-source-reference.md) | カーネルソース要点（ブートシーケンス・GetSysClock・InitLCD・SIF3/HSDMA）|
 
 参考資料（`docs/`、日本語）:
 Reference PDFs in `docs/` (Japanese):

@@ -77,6 +77,13 @@ struct CpuState {
     uint32_t pending_ext[2] = {};
     int      pending_ext_count = 0;
 
+    // Deferred trap: S1C33 hardware guarantees EXT+target atomicity (trap-masked).
+    // When a peripheral asserts a trap while pending_ext_count > 0, the trap is
+    // deferred until the target instruction completes.
+    bool deferred_trap_valid = false;
+    int  deferred_trap_no    = 0;
+    int  deferred_trap_level = 0;
+
     // Halt state (slp/halt): set to true by SLP/HALT, cleared by trap
     bool in_halt = false;
 

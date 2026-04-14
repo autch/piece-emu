@@ -86,9 +86,10 @@ void ClockControl::attach(Bus& bus)
             return static_cast<uint16_t>(clksel_t8_) |
                    (static_cast<uint16_t>(clkctl_t16_[0]) << 8);
         },
-        [this](uint32_t, uint16_t v) {
-            write_single(0x040146, static_cast<uint8_t>(v));
-            write_single(0x040147, static_cast<uint8_t>(v >> 8));
+        [this](uint32_t addr, uint16_t v) {
+            if (addr & 1) { write_single(0x040147, static_cast<uint8_t>(v)); }
+            else { write_single(0x040146, static_cast<uint8_t>(v));
+                   write_single(0x040147, static_cast<uint8_t>(v >> 8)); }
         }
     });
 
@@ -98,9 +99,10 @@ void ClockControl::attach(Bus& bus)
             return static_cast<uint16_t>(clkctl_t16_[1]) |
                    (static_cast<uint16_t>(clkctl_t16_[2]) << 8);
         },
-        [this](uint32_t, uint16_t v) {
-            write_single(0x040148, static_cast<uint8_t>(v));
-            write_single(0x040149, static_cast<uint8_t>(v >> 8));
+        [this](uint32_t addr, uint16_t v) {
+            if (addr & 1) { write_single(0x040149, static_cast<uint8_t>(v)); }
+            else { write_single(0x040148, static_cast<uint8_t>(v));
+                   write_single(0x040149, static_cast<uint8_t>(v >> 8)); }
         }
     });
 
@@ -110,9 +112,10 @@ void ClockControl::attach(Bus& bus)
             return static_cast<uint16_t>(clkctl_t16_[3]) |
                    (static_cast<uint16_t>(clkctl_t16_[4]) << 8);
         },
-        [this](uint32_t, uint16_t v) {
-            write_single(0x04014A, static_cast<uint8_t>(v));
-            write_single(0x04014B, static_cast<uint8_t>(v >> 8));
+        [this](uint32_t addr, uint16_t v) {
+            if (addr & 1) { write_single(0x04014B, static_cast<uint8_t>(v)); }
+            else { write_single(0x04014A, static_cast<uint8_t>(v));
+                   write_single(0x04014B, static_cast<uint8_t>(v >> 8)); }
         }
     });
 
@@ -122,9 +125,10 @@ void ClockControl::attach(Bus& bus)
             return static_cast<uint16_t>(clkctl_t16_[5]) |
                    (static_cast<uint16_t>(clkctl_t8_01_) << 8);
         },
-        [this](uint32_t, uint16_t v) {
-            write_single(0x04014C, static_cast<uint8_t>(v));
-            write_single(0x04014D, static_cast<uint8_t>(v >> 8));
+        [this](uint32_t addr, uint16_t v) {
+            if (addr & 1) { write_single(0x04014D, static_cast<uint8_t>(v)); }
+            else { write_single(0x04014C, static_cast<uint8_t>(v));
+                   write_single(0x04014D, static_cast<uint8_t>(v >> 8)); }
         }
     });
 

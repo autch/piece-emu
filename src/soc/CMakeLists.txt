@@ -7,6 +7,8 @@ add_library(piece_soc STATIC
     peripheral_bcu_area.cpp
     peripheral_wdt.cpp
     peripheral_rtc.cpp
+    peripheral_hsdma.cpp
+    peripheral_sif3.cpp
 )
 
 target_include_directories(piece_soc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

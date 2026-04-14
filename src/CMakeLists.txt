@@ -58,6 +58,7 @@ if(GTest_FOUND)
         tests/unit/test_peripheral_t16.cpp
         tests/unit/test_peripheral_portctrl.cpp
         tests/unit/test_peripheral_rtc.cpp
+        tests/unit/test_peripheral_sif3.cpp
     )
 
     # Tests only need soc + core (no POSIX debug layer required).

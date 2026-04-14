@@ -2,6 +2,7 @@
 #include "cpu.hpp"
 #include "diag.hpp"
 #include "elf_loader.hpp"
+#include "pfi_loader.hpp"
 #include "gdb_rsp.hpp"
 #include "semihosting.hpp"
 #include "peripheral_intc.hpp"
@@ -12,6 +13,8 @@
 #include "peripheral_bcu_area.hpp"
 #include "peripheral_wdt.hpp"
 #include "peripheral_rtc.hpp"
+#include "peripheral_hsdma.hpp"
+#include "peripheral_sif3.hpp"
 
 #include <CLI/CLI.hpp>
 #include <algorithm>
@@ -36,10 +39,11 @@ static void print_reg_snapshot(const CpuState& s) {
 }
 
 int main(int argc, char** argv) {
-    CLI::App app{"P/ECE bare-metal emulator (S1C33209)"};
+    CLI::App app{"P/ECE emulator (S1C33209)"};
     argv = app.ensure_utf8(argv);
 
     std::string  elf_path;
+    std::string  pfi_path;
     bool         use_gdb   = false;
     uint16_t     gdb_port  = 1234;
     bool         debug_rsp = false;
@@ -48,9 +52,13 @@ int main(int argc, char** argv) {
     std::size_t  sram_size  = 0x040000; // 256 KB
     std::size_t  flash_size = 0x080000; // 512 KB
 
-    app.add_option("elf", elf_path, "ELF binary to load and run")
-        ->required()
+    // Exactly one of --pfi or elf must be provided.
+    auto* elf_opt = app.add_option("elf", elf_path, "ELF binary to load and run")
         ->check(CLI::ExistingFile);
+    auto* pfi_opt = app.add_option("--pfi", pfi_path, "P/ECE Flash Image (.pfi) to load")
+        ->check(CLI::ExistingFile);
+    elf_opt->excludes(pfi_opt);
+    pfi_opt->excludes(elf_opt);
 
     auto* gdb_opt = app.add_flag("--gdb", use_gdb,
         "Wait for GDB/LLDB connection before running");
@@ -122,8 +130,29 @@ int main(int argc, char** argv) {
         ClockTimer rtc;
         rtc.attach(bus, intc, clk);
 
-        uint32_t entry = elf_load(bus, elf_path);
-        std::fprintf(stderr, "Loaded %s, entry=0x%06X\n", elf_path.c_str(), entry);
+        Hsdma hsdma;
+        hsdma.attach(bus);
+
+        Sif3 sif3;
+        sif3.attach(bus, intc, hsdma);
+
+        // Load firmware: either a bare-metal ELF or a full PFI flash image.
+        uint32_t entry;
+        if (!pfi_path.empty()) {
+            // Full-system mode: load PFI flash image, boot from reset vector.
+            // The reset vector at 0xC00000 contains a 32-bit jump target.
+            PfiInfo pfi_info = pfi_load(bus, pfi_path);
+            (void)pfi_info; // sys_info available for future use
+            // Read the reset vector (first 4 bytes of flash = word at 0xC00000)
+            entry = bus.read32(Bus::FLASH_BASE);
+            std::fprintf(stderr, "PFI loaded, reset vector=0x%06X\n", entry);
+        } else if (!elf_path.empty()) {
+            entry = elf_load(bus, elf_path);
+            std::fprintf(stderr, "Loaded %s, entry=0x%06X\n", elf_path.c_str(), entry);
+        } else {
+            std::fprintf(stderr, "Error: provide either an ELF file or --pfi <file>\n");
+            return 1;
+        }
 
         cpu.state.pc = entry;
 

@@ -49,7 +49,7 @@ private:
     uint16_t bus_ctl_ = 0;
     uint16_t dram_    = 0;
     uint16_t access_  = 0;
-    uint32_t ttbr_    = 0x400; // P/ECE kernel sets this to 0x400
+    uint32_t ttbr_    = 0x0C0000; // S1C33209 reset value (flash base); kernel sets 0x400
 
     Bus* bus_ = nullptr;
     Cpu* cpu_ = nullptr;

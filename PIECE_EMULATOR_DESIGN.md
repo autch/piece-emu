@@ -63,15 +63,14 @@ $ lldb
 (lldb) c
 ```
 
-#### システムモード（将来）
+#### システムモード（P2-1 実装済み / P2-2 以降未実装）
 
 ゲーム実行用。カーネル込みのフルシステムエミュレーション。
 
-- PFIイメージからフラッシュ全体をロードし、リセットベクタからブート
-- LCD表示（SDL3）、サウンド出力、ボタン入力が必要
+- **P2-1 実装済み**: PFI イメージからフラッシュ全体をロードし、リセットベクタからブート。カーネルが AppStart まで到達することを確認済み。
+- **P2-2 以降未実装**: LCD 表示（S6B0741 + SDL3）、サウンド出力、ボタン入力
 - GUI は SDL3 + imgui を想定
 - デバッガを付けるが、GDB RSPだけか自前のデバッガUIを持つかは未定
-- タイマ・割り込み・DMA・クロック切替などP1/P2コンポーネントが前提
 
 ```
 # フルシステムエミュレーション
@@ -94,13 +93,14 @@ libpiece_soc.a   (src/soc/) → piece_core
 ├── INTC / ClkCtl
 ├── T8×4 / T16×6
 ├── PortCtrl / BcuArea / WDT / RTC
-└── (将来: SIF3, HSDMA)
+└── SIF3 / HSDMA
 
 piece_board      (src/board/, INTERFACE) → piece_soc
 └── (将来: S6B0741 LCD, NAND Flash, PDIUSBD12 USB, SDカード)
 
 libpiece_debug.a (src/debug/) → piece_core
 ├── ELFローダ
+├── PFIローダ
 ├── セミホスティング
 └── GDB RSP
 
@@ -944,13 +944,45 @@ if (breakpoints_.count(cpu_.state.pc) ||
 target = PC + 2 * sign8    （PC = 分岐命令自身のアドレス、+2 は不要）
 ```
 
-### 5.4 ext 蓄積中の割り込みマスク
+### 5.4 EXT+target 不可分性とディレイドブランチ不可分性（実装済み）
 
-CPUマニュアルの記載: 「ext命令と拡張対象の命令の間は、リセットとアドレス不整例外を除くトラップはハードウェアによりマスクされ、発生しません。」
+**EXT+target 不可分性（CPU マニュアル記載）:**
+「ext命令と拡張対象の命令の間は、リセットとアドレス不整例外を除くトラップはハードウェアによりマスクされ、発生しません。」
 
-エミュレータでは ext 蓄積中の割り込み受付を抑制すること。
+**ディレイドブランチ+スロット不可分性:**
+分岐命令（call.d / jp.d / jr.d）とそのディレイスロット命令の間も同様に、トラップは発生しません。ディレイスロット命令の完了後（分岐先アドレス適用後）に発火します。
 
-ext 後にアドレス不整例外が発生し、トラップ処理から reti で戻ると ext が無効化される点にも注意。
+**エミュレータの実装方針（`do_trap` / `step`）:**
+
+周辺デバイスが `assert_trap()` を呼んだタイミングで `pending_ext_count > 0` または `in_delay_slot == true` の場合、トラップを即座に取らず defer する：
+
+```cpp
+// do_trap() の冒頭（通常のマスク可能チェックの後）
+if (state.pending_ext_count > 0 || state.in_delay_slot) {
+    state.deferred_trap_valid = true;
+    state.deferred_trap_no    = no;
+    state.deferred_trap_level = level;
+    return;
+}
+```
+
+`step()` のディレイスロット完了後に発火する：
+
+```cpp
+// step() の末尾（delay slot completion の後）
+if (!state.pending_ext_count && !state.in_delay_slot
+    && state.deferred_trap_valid && !state.fault) {
+    state.deferred_trap_valid = false;
+    do_trap(state.deferred_trap_no, state.deferred_trap_level);
+}
+```
+
+これにより：
+- EXT+target が完全に実行された後、正しい PC（target+2）でトラップが発火する
+- `reti` で target+2 に戻るため、ターゲット命令が EXT なしで再実行される問題が解消される
+- ディレイドブランチの場合は分岐先 PC で保存されるため、`reti` 後に正しいアドレスへ復帰する
+
+**アドレス不整例外については**、バスアクセス中に `bus_.take_fault()` で検出し、`diag_fault` を通じて CPU を停止させる（`reti` からは戻れないため defer 機構の対象外）。
 
 ---
 
@@ -1016,16 +1048,17 @@ MAME の設計で特に倣うべきは、CPUデバイスとメモリ空間の抽
 | **P0** | 逆アセンブラ | 蓄積→合成方式、LLVM出力と突合検証 |
 | **P0** | CPUテストスイート | 命令単位テスト、符号境界テスト |
 | **P0** | GDB RSPデバッガ | ブレークポイント、ステップ実行、レジスタ/メモリ読み書き。初期の主要UIとなる |
-| **P1** | タイマ | 8bit×6, 16bit×6, 計時タイマ（HLT/SLEEPからの起床に必須） |
-| **P1** | 割り込みコントローラ | 割り込み受付、レベル制御、ext 中マスク |
-| **P1** | HLT/SLEEP + イベント駆動スリープ | ホストCPU使用率低減 |
-| **P1** | クロック切替 | P07書き込み検出、24/48MHz切替、タイマ発火間隔への反映 |
-| **P2** | PFIイメージローダ | フルシステムエミュレーション（カーネル起動→アプリ展開）。ゲーム実行に必要 |
-| **P2** | LCDコントローラ | S6B0741 SPI コマンド解釈、128×88 4階調表示 |
-| **P2** | DMA | LCD転送、サウンド転送（システム予約チャネル） |
-| **P2** | ボタン入力 | I/Oポート経由の入力エミュレーション |
-| **P2** | PWMサウンド | タイマ駆動のPWM出力 |
-| **P2** | Flash書き込み | SST39VF400A コマンドシーケンス、PFI書き戻し |
+| **P1** ✅ | タイマ | 8bit×4, 16bit×6, 計時タイマ（HLT/SLEEPからの起床に必須） |
+| **P1** ✅ | 割り込みコントローラ | 割り込み受付、レベル制御 |
+| **P1** ✅ | HLT/SLEEP + イベント駆動スリープ | ホストCPU使用率低減 |
+| **P1** ✅ | クロック切替 | P07書き込み検出、24/48MHz切替、タイマ発火間隔への反映 |
+| **P2-1** ✅ | PFIイメージローダ | フルシステムエミュレーション（カーネル起動→AppStart到達確認） |
+| **P2-1** ✅ | SIF3 シリアル I/F | TXD/STATUS/CTL レジスタ、HSDMA Ch0 インライン DMA |
+| **P2-1** ✅ | HSDMA 高速 DMA | 4 チャネル、Ch0=LCD 転送、Ch1=サウンドコールバック |
+| **P2-2** | LCDコントローラ | S6B0741 SPI コマンド解釈、128×88 4階調表示 |
+| **P2-3** | ボタン入力 | SDL3 キーイベント → K5D/K6D マッピング |
+| **P2-4** | PWMサウンド | HSDMA Ch1 + SDL3 オーディオ出力 |
+| **P2-5** | Flash書き込み | SST39VF400A コマンドシーケンス、PFI書き戻し |
 | **P3** | USB (PDIUSBD12) | 将来拡張 |
 | **P3** | 赤外線通信 | 将来拡張 |
 | **P3** | MMC/SD | 将来拡張 |

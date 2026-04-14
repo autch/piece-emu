@@ -104,8 +104,8 @@ void InterruptController::attach(Bus& bus,
             [this, off](uint32_t) -> uint16_t {
                 return io_read(off);
             },
-            [this, off](uint32_t, uint16_t val) {
-                io_write(off, val);
+            [this, off](uint32_t addr, uint16_t val) {
+                io_write(off, addr, val);
             }
         });
     }
@@ -118,7 +118,7 @@ uint16_t InterruptController::io_read(uint32_t off)
            (static_cast<uint16_t>(regs_[off + 1]) << 8);
 }
 
-void InterruptController::io_write(uint32_t off, uint16_t val)
+void InterruptController::io_write(uint32_t off, uint32_t addr, uint16_t val)
 {
     // ISR registers are at offsets 32..39 in regs_[].
     // ISR write semantics depend on rRESET.RSTONLY (bit 0 of byte at offset 63):
@@ -133,22 +133,27 @@ void InterruptController::io_write(uint32_t off, uint16_t val)
     //                        bit clears it; writing 1 has no effect.
     bool rstonly = (regs_[63] & 0x01) != 0;
 
-    for (int b = 0; b < 2; b++) {
-        int byte_off = static_cast<int>(off) + b;
-        uint8_t byte_val = static_cast<uint8_t>(val >> (b * 8));
-
+    auto write_byte = [&](int byte_off, uint8_t byte_val) {
         if (byte_off >= 32 && byte_off <= 39) {
             // ISR register: selective clear
             if (rstonly) {
-                // RSTONLY mode: bits written as 0 are cleared, 1 = no effect
                 regs_[byte_off] &= byte_val;
             } else {
-                // Normal mode: direct write — writing 0 clears, writing 1 force-sets
                 regs_[byte_off] = byte_val;
             }
         } else {
             regs_[byte_off] = byte_val;
         }
+    };
+
+    if (addr & 1) {
+        // Byte write to odd address: only update the high byte (regs_[off+1]).
+        // The bus passes the byte value in the low bits of val.
+        write_byte(static_cast<int>(off) + 1, static_cast<uint8_t>(val));
+    } else {
+        // Halfword write or byte write to even address: update both bytes.
+        write_byte(static_cast<int>(off),     static_cast<uint8_t>(val));
+        write_byte(static_cast<int>(off) + 1, static_cast<uint8_t>(val >> 8));
     }
 }
 

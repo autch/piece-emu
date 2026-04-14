@@ -1,5 +1,6 @@
 add_library(piece_debug STATIC
     elf_loader.cpp
+    pfi_loader.cpp
     semihosting.cpp
     gdb_rsp.cpp
     gdb_rsp_regs.cpp

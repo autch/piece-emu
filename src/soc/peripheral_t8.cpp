@@ -45,9 +45,15 @@ void Timer8bit::attach(Bus& bus,
             return static_cast<uint16_t>(ctl_) |
                    (static_cast<uint16_t>(rld_) << 8);
         },
-        [this](uint32_t, uint16_t v) {
-            on_ctl_write(static_cast<uint8_t>(v));
-            rld_ = static_cast<uint8_t>(v >> 8);
+        [this](uint32_t addr, uint16_t v) {
+            if (addr & 1) {
+                // Byte write to odd address (rRLD): val in low bits.
+                rld_ = static_cast<uint8_t>(v);
+            } else {
+                // Halfword write or byte write to even address (rT8CTL).
+                on_ctl_write(static_cast<uint8_t>(v));
+                rld_ = static_cast<uint8_t>(v >> 8);
+            }
         }
     });
 

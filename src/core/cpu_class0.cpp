@@ -80,7 +80,7 @@ void Cpu::h_reti(Cpu& cpu, uint16_t) {
 void Cpu::h_call_rb(Cpu& cpu, uint16_t insn) {
     cpu.flush_ext();
     Insn i{insn};
-    int rb_n = i.rb();
+    int rb_n = i.rd();   // register is in bits [3:0] for class 0a
     bool delayed = i.d();
     uint32_t target = cpu.state.r[rb_n];
     uint32_t ret_addr = cpu.state.pc + (delayed ? 2 : 0);
@@ -101,7 +101,7 @@ void Cpu::h_ret(Cpu& cpu, uint16_t insn) {
 void Cpu::h_jp_rb(Cpu& cpu, uint16_t insn) {
     cpu.flush_ext();
     Insn i{insn};
-    int rb_n = i.rb();
+    int rb_n = i.rd();   // register is in bits [3:0] for class 0a
     bool delayed = i.d();
     uint32_t fault_pc = cpu.state.pc - 2;
 

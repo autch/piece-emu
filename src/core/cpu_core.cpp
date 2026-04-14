@@ -46,10 +46,15 @@ int32_t Cpu::ext_pcrel(uint32_t imm8) const {
         uint32_t combined = (state.pending_ext[0] << 8) | raw;
         return static_cast<int32_t>(sign_ext(combined, 21));
     }
-    uint64_t combined = (uint64_t(state.pending_ext[0]) << 21)
-                      | (uint64_t(state.pending_ext[1]) << 8) | raw;
-    uint64_t sign = uint64_t(1) << 33;
-    int64_t extended = static_cast<int64_t>((combined ^ sign) - sign);
+    // Piemu-compatible 31-bit encoding:
+    //   bits [7:0]  = sign8
+    //   bits [20:8] = pending_ext[1] (second ext, 13 bits)
+    //   bits [30:21]= pending_ext[0][12:3] (first ext upper 10 bits; low 3 discarded)
+    // Sign bit is bit 30; sign-extended to 32 bits.
+    uint32_t combined = (raw & 0xFFu)
+                      | (uint32_t(state.pending_ext[1]) << 8)
+                      | ((uint32_t(state.pending_ext[0]) >> 3) << 21);
+    uint32_t extended = (combined & (1u << 30)) ? (combined | 0x80000000u) : combined;
     return static_cast<int32_t>(extended);
 }
 
@@ -86,6 +91,19 @@ void Cpu::do_trap(int no, int level) {
     if (no >= 16) {
         if (!state.psr.ie()) return;
         if (static_cast<uint32_t>(level) <= state.psr.il()) return;
+    }
+    // S1C33 hardware guarantees two atomicity properties that prevent traps from
+    // being taken mid-sequence:
+    //   1. EXT+target: trap cannot fire between EXT and its target instruction.
+    //   2. Delayed branch+slot: trap cannot fire between the branch and its delay
+    //      slot; the slot executes first, then the trap fires at the branch target.
+    // Both cases are handled by deferring the trap.  step() fires the deferred
+    // trap only when pending_ext_count == 0 and in_delay_slot == false.
+    if (state.pending_ext_count > 0 || state.in_delay_slot) {
+        state.deferred_trap_valid = true;
+        state.deferred_trap_no    = no;
+        state.deferred_trap_level = level;
+        return;
     }
     uint32_t vec = bus_.read32(state.ttbr + no * 4);
     state.sp -= 4;
@@ -254,7 +272,7 @@ static DelayClass delay_slot_class(uint16_t insn) {
         if (op2_f == 0) {
             int op1_f = (insn >> 10) & 7;
             switch (op1_f) {
-            case 0: case 1: return DC_SOFT;  // ld.w %sd/%ss: D="-" but 1-cycle no-mem
+            case 0: case 1: return DC_OK;    // ld.w %rd,%ss / ld.w %sd,%rs: used by EPSON idiv.lib
             case 2: case 3: case 4: case 5: return DC_HARD;  // btst/bclr/bset/bnot: memory
             case 6: case 7: return DC_OK;    // adc / sbc: D=○
             default: return DC_HARD;
@@ -384,6 +402,15 @@ int Cpu::step() {
         state.in_delay_slot = false;
         state.delay_caller  = 0;
         state.pc = slot_target;
+    }
+
+    // ------------------------------------------------------------------
+    // Deferred trap: fire after the target instruction (and delay-slot
+    // completion) so EXT+target and delayed-branch atomicity are modelled.
+    // ------------------------------------------------------------------
+    if (!state.pending_ext_count && !state.in_delay_slot && state.deferred_trap_valid && !state.fault) {
+        state.deferred_trap_valid = false;
+        do_trap(state.deferred_trap_no, state.deferred_trap_level);
     }
 
     return 1;

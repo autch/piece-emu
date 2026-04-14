@@ -79,9 +79,9 @@ public:
 private:
     // K port
     uint8_t cfk5_ = 0;
-    uint8_t k5d_  = 0; // input-only: written by set_k5()
+    uint8_t k5d_  = 0xFF; // input-only: written by set_k5(); active-low, 0xFF = all released
     uint8_t cfk6_ = 0;
-    uint8_t k6d_  = 0; // input-only: written by set_k6()
+    uint8_t k6d_  = 0xFF; // input-only: written by set_k6(); active-low, 0xFF = all released
 
     // Port input interrupt (10 bytes, 0x0402C6..0x0402CF)
     uint8_t pint_[10] = {};
