@@ -20,8 +20,16 @@ find_package(CLI11 CONFIG REQUIRED)
 #   piece_soc    — S1C33209 on-chip peripherals (→ piece_core)
 #   piece_board  — P/ECE board-level external devices (→ piece_soc, INTERFACE only for now)
 #   piece_debug  — ELF loader, semihosting, GDB RSP (POSIX) (→ piece_core)
-#   piece_host   — SDL3 LCD/audio/input frontend (future, see host/CMakeLists.txt)
+#   piece_host   — SDL3 LCD/audio/input frontend (see host/CMakeLists.txt; stub when SDL3 absent)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# piece_pfi_format — shared PFI/PFFS on-disk format definitions (pfi_format.h).
+# Pure C header; safe to include from C and C++.
+# Both src/tools (C) and src/debug (C++) link against this INTERFACE target.
+# ---------------------------------------------------------------------------
+add_library(piece_pfi_format INTERFACE)
+target_include_directories(piece_pfi_format INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_subdirectory(core)
 add_subdirectory(soc)
 add_subdirectory(board)
