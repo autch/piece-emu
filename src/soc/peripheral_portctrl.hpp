@@ -76,6 +76,10 @@ public:
     uint8_t cfk6() const { return cfk6_; }
     uint8_t pd(int port) const { return pport_[port * 4 + 1]; }
 
+    // P21 (LCD RS line): bit 1 of P2D register.
+    // 0 = command mode, 1 = data mode.
+    bool p21d() const { return (pd(2) >> 1) & 1; }
+
 private:
     // K port
     uint8_t cfk5_ = 0;
