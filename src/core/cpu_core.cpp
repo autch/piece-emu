@@ -240,12 +240,15 @@ static DelayClass delay_slot_class(uint16_t insn) {
     if (c == 0) {
         int op1_f = (insn >> 9) & 0xF;
         if (op1_f < 4) {
-            // Class 0a: nop (op2_f=0), slp (1), halt (2) pass the three mechanical
-            // constraints but are not listed as D=○ → SOFT.
+            // Class 0a: nop (op2_f=0) is universally used as a delay-slot filler
+            // (including by LLVM) → treat as DC_OK.
+            // slp (op2_f=1) and halt (op2_f=2) pass the mechanical constraints
+            // but are not listed as D=○ → SOFT.
             // Everything else: pushn/popn (memory), brk/int/reti (trap=memory),
             // call/ret/jp (branch + possible memory) → HARD.
             int op2_f = (insn >> 6) & 3;
-            if (op1_f == 0 && op2_f <= 2) return DC_SOFT;  // nop / slp / halt
+            if (op1_f == 0 && op2_f == 0) return DC_OK;   // nop — always safe
+            if (op1_f == 0 && op2_f <= 2) return DC_SOFT;  // slp / halt
         }
         return DC_HARD;  // all other class-0a + all class-0b branches
     }
