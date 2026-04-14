@@ -12,6 +12,7 @@ add_compile_options(-Wall -Wextra -Wpedantic)
 # ---------------------------------------------------------------------------
 find_package(GTest QUIET)
 find_package(CLI11 CONFIG REQUIRED)
+find_package(SDL3 CONFIG)   # optional; enables piece-emu-system + piece_host
 
 # ---------------------------------------------------------------------------
 # Library layers

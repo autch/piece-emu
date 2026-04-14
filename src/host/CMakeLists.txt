@@ -1,18 +1,21 @@
-# host/ — SDL3 host interface (future)
+# host/ — SDL3 host interface
 #
-# Planned sources:
-#   lcd_renderer.cpp   — S6B0741 framebuffer → SDL3 texture
-#   audio_out.cpp      — Timer PWM samples  → SDL3 Audio
-#   input_handler.cpp  — SDL3 events        → K/P port bits
+# Sources:
+#   lcd_renderer.cpp   — S6B0741 framebuffer → SDL3 texture + event polling
 #
-# To enable: cmake with -DVCPKG_MANIFEST_FEATURES=system and uncomment below.
+# Planned (P2-4):
+#   audio_out.cpp      — Timer PWM samples → SDL3 Audio
+#
+# SDL3 is found by the top-level CMakeLists.txt.  This file builds a STATIC
+# library when SDL3 is present, or an empty INTERFACE stub otherwise.
 
-# find_package(SDL3 CONFIG REQUIRED)
-#
-# add_library(piece_host STATIC
-#     lcd_renderer.cpp
-#     audio_out.cpp
-#     input_handler.cpp
-# )
-# target_include_directories(piece_host PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-# target_link_libraries(piece_host PUBLIC piece_board piece_soc piece_core SDL3::SDL3)
+if(SDL3_FOUND)
+    add_library(piece_host STATIC
+        lcd_renderer.cpp
+    )
+    target_include_directories(piece_host PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(piece_host PUBLIC piece_board SDL3::SDL3)
+else()
+    # Stub target so other targets can always link against piece_host.
+    add_library(piece_host INTERFACE)
+endif()
