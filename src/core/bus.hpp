@@ -7,6 +7,21 @@
 #include <vector>
 
 // ============================================================================
+// Watchpoints
+// ============================================================================
+
+enum class WpType { WRITE, READ, RW };
+
+struct Watchpoint {
+    uint32_t addr;
+    uint32_t size = 4;
+    WpType   type = WpType::WRITE;
+};
+
+// Callback signature: (watchpoint, accessed_addr, value, width_bytes, is_write)
+using WpCallback = std::function<void(const Watchpoint&, uint32_t, uint32_t, int, bool)>;
+
+// ============================================================================
 // Bus — BCU (Bus Control Unit) for S1C33209
 //
 // Address space (28-bit):
@@ -67,6 +82,9 @@ public:
     // Cycle counter (incremented by each access)
     uint32_t cycles = 0;
 
+    // Debug: current CPU PC for watchpoint logging (set by emulator main loop)
+    uint32_t debug_pc = 0;
+
     // Attach a diagnostic sink (optional; defaults to StderrDiagSink).
     // The Bus never owns the sink pointer.
     void set_diag(DiagSink* sink) { diag_ = sink ? sink : &default_sink_; }
@@ -74,6 +92,21 @@ public:
     // Returns true (and clears the flag) if a bus-level fault occurred since
     // the last call.  Cpu::step() polls this after each dispatch to halt the CPU.
     bool take_fault() { bool f = fault_pending_; fault_pending_ = false; return f; }
+
+    // ---- Watchpoints --------------------------------------------------------
+    // add_watchpoint: addr/size define the monitored byte range; type selects
+    // which access kind fires the callback.  Multiple watchpoints may be added.
+    void add_watchpoint(uint32_t addr, uint32_t size = 4,
+                        WpType type = WpType::WRITE);
+    // Remove the watchpoint that exactly matches addr+size+type.
+    void remove_watchpoint(uint32_t addr, uint32_t size, WpType type);
+    void clear_watchpoints();
+    void set_wp_callback(WpCallback cb) { wp_cb_ = std::move(cb); }
+
+    // ---- Shadow SRAM --------------------------------------------------------
+    // Returns the PC of the last instruction that wrote to the given SRAM
+    // address, or 0xFFFF'FFFF if the byte has never been written since reset.
+    uint32_t shadow_last_writer(uint32_t addr) const;
 
     // sram_size:  external SRAM in bytes (default 256 KB — standard P/ECE)
     // flash_size: external Flash in bytes (default 512 KB — standard P/ECE;
@@ -111,12 +144,24 @@ private:
     std::vector<uint8_t> flash_;
     std::vector<IoHandler> io_handlers_; // indexed by (addr - IOREG_BASE) / 2
 
+    // Shadow SRAM: parallel to sram_, one PC entry per byte.
+    // Initialised to 0xFFFF'FFFF ("never written").
+    std::vector<uint32_t> shadow_sram_;
+
+    // Watchpoint list and callback.
+    std::vector<Watchpoint> watchpoints_;
+    WpCallback              wp_cb_;
+
     StderrDiagSink default_sink_;
     DiagSink*      diag_         = &default_sink_;
     bool           fault_pending_ = false;
 
     enum class Region { IRAM, SRAM, FLASH, IO, NONE };
     Region classify(uint32_t addr) const;
+
+    // Watchpoint helpers.
+    void fire_wp(uint32_t addr, uint32_t val, int width, bool is_write);
+    void update_shadow(uint32_t sram_off, int width); // record debug_pc
 
     uint8_t* ptr_for(uint32_t addr, std::size_t size);
     const uint8_t* cptr_for(uint32_t addr, std::size_t size) const;
