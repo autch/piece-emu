@@ -86,14 +86,20 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# piece-emu-system — full-system frontend (future; requires SDL3)
-# To enable: cmake with -DVCPKG_MANIFEST_FEATURES=system and uncomment below.
+# piece-emu-system — full-system frontend (SDL3 display + button input)
+# Requires SDL3.  Enable by building with -DVCPKG_MANIFEST_FEATURES=system.
 # ---------------------------------------------------------------------------
-# add_executable(piece-emu-system system_main.cpp)
-# target_link_libraries(piece-emu-system PRIVATE
-#     piece_host
-#     piece_board
-#     piece_soc
-#     piece_debug
-#     piece_core
-# )
+if(SDL3_FOUND)
+    add_executable(piece-emu-system system_main.cpp)
+    target_link_libraries(piece-emu-system PRIVATE
+        piece_host
+        piece_board
+        piece_soc
+        piece_debug
+        piece_core
+        CLI11::CLI11
+    )
+    message(STATUS "piece-emu-system target enabled")
+else()
+    message(STATUS "SDL3 not found — piece-emu-system target skipped")
+endif()
