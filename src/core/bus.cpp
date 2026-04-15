@@ -176,8 +176,10 @@ void Bus::write8(uint32_t addr, uint8_t val) {
     case Region::SRAM:
         cycles += sram_wait + 2;
         if (addr - SRAM_BASE < sram_.size()) {
-            fire_wp(addr, val, 1, true);
-            update_shadow(addr - SRAM_BASE, 1);
+            if (!watchpoints_.empty()) {
+                fire_wp(addr, val, 1, true);
+                update_shadow(addr - SRAM_BASE, 1);
+            }
             sram_[addr - SRAM_BASE] = val;
         }
         return;
@@ -210,8 +212,10 @@ void Bus::write16(uint32_t addr, uint16_t val) {
     case Region::SRAM:
         cycles += sram_wait + 2;
         if (addr - SRAM_BASE < sram_.size()) {
-            fire_wp(addr, val, 2, true);
-            update_shadow(addr - SRAM_BASE, 2);
+            if (!watchpoints_.empty()) {
+                fire_wp(addr, val, 2, true);
+                update_shadow(addr - SRAM_BASE, 2);
+            }
             put_le16(&sram_[addr - SRAM_BASE], val);
         }
         return;
@@ -241,8 +245,10 @@ void Bus::write32(uint32_t addr, uint32_t val) {
     case Region::SRAM:
         cycles += (sram_wait + 2) * 2;
         if (addr - SRAM_BASE < sram_.size()) {
-            fire_wp(addr, val, 4, true);
-            update_shadow(addr - SRAM_BASE, 4);
+            if (!watchpoints_.empty()) {
+                fire_wp(addr, val, 4, true);
+                update_shadow(addr - SRAM_BASE, 4);
+            }
             put_le32(&sram_[addr - SRAM_BASE], val);
         }
         return;
