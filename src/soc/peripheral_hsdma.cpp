@@ -30,6 +30,7 @@ void Hsdma::do_ch0_inline(Bus& bus, const TxdCallback& cb)
     // Transfer bytes from ch0_sadr while ch0 EN is active.
     // This is called after the initial TXD byte has already been processed by SIF3.
     // Matches piemu's IO_W(pSIF3_TXD) loop logic.
+    bool completed = false;
     while (ch0_en && ch0_cnt > 0) {
         uint8_t data = bus.read8(ch0_sadr);
         ch0_sadr++;
@@ -40,9 +41,12 @@ void Hsdma::do_ch0_inline(Bus& bus, const TxdCallback& cb)
         if (ch0_cnt == 0) {
             ch0_en        = false;
             chan_[0].en  &= ~HS_EN_BIT;
+            completed     = true;
         }
         cb(data);
     }
+    if (completed && on_ch0_complete)
+        on_ch0_complete();
 }
 
 void Hsdma::on_en_write(int ch, uint16_t val, Bus& bus)

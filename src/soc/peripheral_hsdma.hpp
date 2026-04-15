@@ -54,6 +54,10 @@ public:
     // Set by the sound subsystem in P2-4; nullptr = stub (no-op).
     std::function<void(Bus&, uint32_t sadr, uint32_t cnt)> on_ch1_start;
 
+    // Callback invoked when Ch0 transfer counter reaches zero (LCD frame done).
+    // Set by the display frontend to trigger LCD rendering.
+    std::function<void()> on_ch0_complete;
+
 private:
     // Raw register storage for Ch0..3 (used for correct R/W passthrough)
     // Each channel: cnt32, sadr32, dadr32, en16, tf16

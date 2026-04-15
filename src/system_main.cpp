@@ -3,7 +3,7 @@
 // Loads a P/ECE PFI flash image and runs the S1C33209 emulator with:
 //   - SDL3 window showing the S6B0741 LCD (128×88, 4× scale)
 //   - Keyboard input mapped to P/ECE buttons via PortCtrl
-//   - Frame rate ~60 fps (400 000 cycles per frame at 24 MHz)
+//   - LCD rendering driven by HSDMA Ch0 completion (matches app frame rate)
 //
 // Key bindings:
 //   Arrow keys  → D-pad (right/left/down/up = K60/K61/K62/K63)
@@ -35,17 +35,21 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
+#include <cstring>
+#include <memory>
+#include <mutex>
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 // ---------------------------------------------------------------------------
-// CPU clock and frame timing
+// CPU clock
 // ---------------------------------------------------------------------------
-static constexpr uint64_t CPU_HZ          = 24'000'000;
-static constexpr uint64_t CYCLES_PER_FRAME = CPU_HZ / 60; // ~400 000
+static constexpr uint64_t CPU_HZ = 24'000'000;
 
 // ---------------------------------------------------------------------------
 // Button → K5D/K6D bit mapping
@@ -90,7 +94,7 @@ static void handle_key(bool is_down, int scancode, ButtonState& btn)
 }
 
 // ---------------------------------------------------------------------------
-// Register dump (same as in main.cpp)
+// Register dump
 // ---------------------------------------------------------------------------
 static void print_reg_snapshot(const CpuState& s)
 {
@@ -110,7 +114,7 @@ static void print_reg_snapshot(const CpuState& s)
 }
 
 // ---------------------------------------------------------------------------
-// Debug helpers shared between main.cpp and system_main.cpp
+// Debug helpers
 // ---------------------------------------------------------------------------
 
 // Parse "0xADDR" or "0xADDR:SIZE" → {addr, size}.
@@ -145,13 +149,41 @@ static WpCallback make_wp_callback(const Bus& bus)
 }
 
 // ---------------------------------------------------------------------------
-// Entry point
+// LcdFrameBuf — shared pixel buffer between CPU thread and main (SDL) thread.
+//
+// CPU thread calls push() on HSDMA Ch0 completion.
+// Main thread calls take() at its own ~60 Hz cadence and passes pixels to
+// LcdRenderer::render(), which must only be called from the main thread.
+//
+// If multiple frames arrive before take(), the latest wins (frame drop).
 // ---------------------------------------------------------------------------
-int main(int argc, char** argv)
-{
-    CLI::App app{"P/ECE system emulator (SDL3 display)"};
-    argv = app.ensure_utf8(argv);
+struct LcdFrameBuf {
+    std::mutex mtx;
+    uint8_t    pixels[88][128] = {};
+    bool       pending = false;
 
+    // Called from CPU thread: snapshot LCD pixels.
+    void push(const uint8_t src[88][128]) {
+        std::lock_guard<std::mutex> lk(mtx);
+        std::memcpy(pixels, src, sizeof(pixels));
+        pending = true;
+    }
+
+    // Called from main thread: returns true and copies out if a new frame is
+    // available.
+    bool take(uint8_t dst[88][128]) {
+        std::lock_guard<std::mutex> lk(mtx);
+        if (!pending) return false;
+        std::memcpy(dst, pixels, sizeof(pixels));
+        pending = false;
+        return true;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Config — parsed CLI options
+// ---------------------------------------------------------------------------
+struct Config {
     std::string              pfi_path;
     bool                     trace      = false;
     uint64_t                 max_cycles = 0;
@@ -163,228 +195,176 @@ int main(int argc, char** argv)
     std::vector<std::string> wp_write_specs, wp_read_specs, wp_rw_specs;
     std::vector<std::string> break_specs;
 
-    app.add_option("--pfi", pfi_path, "P/ECE Flash Image (.pfi) to load")
-        ->required()
-        ->check(CLI::ExistingFile);
-    app.add_option("--max-cycles", max_cycles,
-        "Stop after N cycles (default: unlimited)");
-    app.add_flag("--trace", trace,
-        "Print disassembly for each instruction");
-    app.add_option("--scale", scale,
-        "Display scale factor (default: 4 → 512×352)")
-        ->check(CLI::Range(1, 8));
-    app.add_option("--sram-size",  sram_size,  "SRAM size in bytes");
-    app.add_option("--flash-size", flash_size, "Flash size in bytes");
-    app.add_option("--gdb-port", gdb_port,
-        "Start GDB RSP server on this TCP port (e.g. 1234); 0 = disabled");
-    app.add_flag("--gdb-debug", gdb_debug,
-        "Print GDB RSP packet traffic to stderr");
-    app.add_option("--wp-write", wp_write_specs,
-        "Write watchpoint: ADDR or ADDR:SIZE (hex, repeatable)");
-    app.add_option("--wp-read",  wp_read_specs,
-        "Read watchpoint: ADDR or ADDR:SIZE (hex, repeatable)");
-    app.add_option("--wp-rw",    wp_rw_specs,
-        "Read/write watchpoint: ADDR or ADDR:SIZE (hex, repeatable)");
-    app.add_option("--break-at", break_specs,
-        "Dump registers when PC == ADDR (hex, repeatable)");
+    static Config parse(int argc, char** argv)
+    {
+        Config cfg;
+        CLI::App app{"P/ECE system emulator (SDL3 display)"};
+        argv = app.ensure_utf8(argv);
 
-    CLI11_PARSE(app, argc, argv);
+        app.add_option("--pfi", cfg.pfi_path, "P/ECE Flash Image (.pfi) to load")
+            ->required()
+            ->check(CLI::ExistingFile);
+        app.add_option("--max-cycles", cfg.max_cycles,
+            "Stop after N cycles (default: unlimited)");
+        app.add_flag("--trace", cfg.trace,
+            "Print disassembly for each instruction");
+        app.add_option("--scale", cfg.scale,
+            "Display scale factor (default: 4 → 512×352)")
+            ->check(CLI::Range(1, 8));
+        app.add_option("--sram-size",  cfg.sram_size,  "SRAM size in bytes");
+        app.add_option("--flash-size", cfg.flash_size, "Flash size in bytes");
+        app.add_option("--gdb-port", cfg.gdb_port,
+            "Start GDB RSP server on this TCP port (e.g. 1234); 0 = disabled");
+        app.add_flag("--gdb-debug", cfg.gdb_debug,
+            "Print GDB RSP packet traffic to stderr");
+        app.add_option("--wp-write", cfg.wp_write_specs,
+            "Write watchpoint: ADDR or ADDR:SIZE (hex, repeatable)");
+        app.add_option("--wp-read",  cfg.wp_read_specs,
+            "Read watchpoint: ADDR or ADDR:SIZE (hex, repeatable)");
+        app.add_option("--wp-rw",    cfg.wp_rw_specs,
+            "Read/write watchpoint: ADDR or ADDR:SIZE (hex, repeatable)");
+        app.add_option("--break-at", cfg.break_specs,
+            "Dump registers when PC == ADDR (hex, repeatable)");
 
-    try {
-        Bus bus(sram_size, flash_size);
-        Cpu cpu(bus);
+        try { app.parse(argc, argv); }
+        catch (const CLI::ParseError& e) { std::exit(app.exit(e)); }
+        return cfg;
+    }
+};
 
-        StderrDiagSink diag_sink;
-        cpu.set_diag(&diag_sink);
-        bus.set_diag(&diag_sink);
+// ---------------------------------------------------------------------------
+// PiecePeripherals — all S1C33209 on-chip peripherals wired together.
+// ---------------------------------------------------------------------------
+struct PiecePeripherals {
+    InterruptController intc;
+    ClockControl        clk;
+    Timer8bit           t8_ch[4]  = {Timer8bit(0),  Timer8bit(1),
+                                     Timer8bit(2),  Timer8bit(3)};
+    Timer16bit          t16_ch[6] = {Timer16bit(0), Timer16bit(1), Timer16bit(2),
+                                     Timer16bit(3), Timer16bit(4), Timer16bit(5)};
+    PortCtrl            portctrl;
+    BcuAreaCtrl         bcu_area;
+    WatchdogTimer       wdt;
+    ClockTimer          rtc;
+    Hsdma               hsdma;
+    Sif3                sif3;
+    S6b0741             lcd;
 
-        // ---- Debug: watchpoints & break-at ----------------------------------
-        for (auto& s : wp_write_specs) {
-            auto [a, sz] = parse_addr_size(s);
-            bus.add_watchpoint(a, sz, WpType::WRITE);
-        }
-        for (auto& s : wp_read_specs) {
-            auto [a, sz] = parse_addr_size(s);
-            bus.add_watchpoint(a, sz, WpType::READ);
-        }
-        for (auto& s : wp_rw_specs) {
-            auto [a, sz] = parse_addr_size(s);
-            bus.add_watchpoint(a, sz, WpType::RW);
-        }
-        // GDB RSP watchpoints will override this callback when a client connects.
-        // Install the stderr logger as the default (active when no RSP client).
-        bus.set_wp_callback(make_wp_callback(bus));
+    uint64_t            nmi_count = 0;
 
-        std::set<uint32_t> break_addrs;
-        for (auto& s : break_specs)
-            break_addrs.insert(static_cast<uint32_t>(std::stoul(s, nullptr, 0)));
-        // ---------------------------------------------------------------------
-
-        uint64_t total_cycles = 0;
-
-        // Peripheral initialisation (identical to main.cpp)
-        InterruptController intc;
+    void attach(Bus& bus, Cpu& cpu)
+    {
         intc.attach(bus, [&cpu](int trap_no, int level) {
             cpu.assert_trap(trap_no, level);
         });
-
-        ClockControl clk;
         clk.attach(bus);
-
-        Timer8bit  t8_ch[4]  = {Timer8bit(0),  Timer8bit(1),  Timer8bit(2),  Timer8bit(3)};
-        Timer16bit t16_ch[6] = {Timer16bit(0), Timer16bit(1), Timer16bit(2),
-                                Timer16bit(3), Timer16bit(4), Timer16bit(5)};
         for (int i = 0; i < 4; i++) t8_ch[i].attach(bus, intc, clk);
         for (int i = 0; i < 6; i++) t16_ch[i].attach(bus, intc, clk);
-
-        PortCtrl portctrl;
         portctrl.attach(bus, intc, &clk);
-
-        BcuAreaCtrl bcu_area;
         bcu_area.attach(bus, cpu);
-
-        uint64_t nmi_count = 0;
-        WatchdogTimer wdt;
-        wdt.attach(bus, clk,
-            [&cpu, &nmi_count](int no, int lvl) {
-                ++nmi_count;
-                cpu.assert_trap(no, lvl);
-            });
-
-        ClockTimer rtc;
+        wdt.attach(bus, clk, [&cpu, this](int no, int lvl) {
+            ++nmi_count;
+            cpu.assert_trap(no, lvl);
+        });
         rtc.attach(bus, intc, clk);
-
-        Hsdma hsdma;
         hsdma.attach(bus);
-
-        Sif3 sif3;
         sif3.attach(bus, intc, hsdma);
-
-        // LCD controller — receives bytes from SIF3
-        S6b0741 lcd;
         lcd.attach(portctrl);
-        sif3.set_txd_callback([&lcd](uint8_t b) { lcd.write(b); });
+        sif3.set_txd_callback([this](uint8_t b) { lcd.write(b); });
+    }
 
-        // Load PFI flash image
-        PfiInfo pfi_info = pfi_load(bus, pfi_path);
-        (void)pfi_info;
-        uint32_t entry = bus.read32(Bus::FLASH_BASE);
-        std::fprintf(stderr, "PFI loaded, reset vector=0x%06X\n", entry);
-        cpu.state.pc = entry;
+    void tick(uint64_t cycles)
+    {
+        for (int i = 0; i < 4; i++) t8_ch[i].tick(cycles);
+        for (int i = 0; i < 6; i++) t16_ch[i].tick(cycles);
+        wdt.tick(cycles);
+        rtc.tick(cycles);
+    }
 
-        // SDL3 renderer
-        LcdRenderer renderer;
-        if (!renderer.init(scale)) {
-            std::fprintf(stderr, "Failed to initialise SDL3 renderer\n");
-            return 1;
-        }
+    uint64_t next_wake_cycle()
+    {
+        uint64_t wake = UINT64_MAX;
+        for (int i = 0; i < 4; i++) wake = std::min(wake, t8_ch[i].next_wake_cycle());
+        for (int i = 0; i < 6; i++) wake = std::min(wake, t16_ch[i].next_wake_cycle());
+        wake = std::min(wake, rtc.next_wake_cycle());
+        wake = std::min(wake, wdt.next_wake_cycle());
+        return wake;
+    }
+};
 
-        // ---- GDB RSP server (async, background thread) ----------------------
-        std::unique_ptr<GdbRsp> gdb_rsp;
-        if (gdb_port > 0) {
-            gdb_rsp = std::make_unique<GdbRsp>(bus, cpu, gdb_port, gdb_debug);
-            gdb_rsp->serve_async();
-        }
+// ---------------------------------------------------------------------------
+// CpuRunner — drives the CPU emulation loop in a dedicated thread.
+//
+// All SDL calls stay on the main thread; only SDL_GetTicksNS / SDL_DelayNS
+// are used here (safe from any thread).
+// ---------------------------------------------------------------------------
+struct CpuRunner {
+    Bus&                       bus;
+    Cpu&                       cpu;
+    PiecePeripherals&          periph;
+    const Config&              cfg;
+    uint64_t&                  total_cycles;
+    const std::set<uint32_t>&  break_addrs;
+    std::unique_ptr<GdbRsp>&   gdb_rsp;
+    std::atomic<bool>&         quit_flag;
+    std::atomic<uint16_t>&     shared_buttons;
 
-        auto tick_all = [&](uint64_t cycles) {
-            for (int i = 0; i < 4; i++) t8_ch[i].tick(cycles);
-            for (int i = 0; i < 6; i++) t16_ch[i].tick(cycles);
-            wdt.tick(cycles);
-            rtc.tick(cycles);
-        };
+    void run()
+    {
+        periph.portctrl.set_k5(0xFF);
+        periph.portctrl.set_k6(0xFF);
 
-        auto find_next_wake = [&]() -> uint64_t {
-            uint64_t wake = UINT64_MAX;
-            for (int i = 0; i < 4; i++) wake = std::min(wake, t8_ch[i].next_wake_cycle());
-            for (int i = 0; i < 6; i++) wake = std::min(wake, t16_ch[i].next_wake_cycle());
-            wake = std::min(wake, rtc.next_wake_cycle());
-            wake = std::min(wake, wdt.next_wake_cycle());
-            return wake;
-        };
-
-        ButtonState btn;
-        // Initialise PortCtrl input state explicitly (all buttons released).
-        portctrl.set_k5(btn.k5);
-        portctrl.set_k6(btn.k6);
-
-        uint64_t next_frame = total_cycles + CYCLES_PER_FRAME;
         bool quit = false;
 
-        // Wall-clock frame pacing: target ~16 ms per frame (60 fps).
-        static constexpr uint64_t FRAME_NS = 1'000'000'000ULL / 60;
-        uint64_t frame_start_ns = SDL_GetTicksNS();
-
-        // Intra-frame event polling interval (cycles).
-        // Events are drained at this interval so that key presses shorter than
-        // one 400K-cycle frame are not missed by pcePadGetProc.
-        // ~10 000 cycles ≈ 2 400 polls/s at 24 MHz.
-        static constexpr uint64_t EVENT_INTERVAL = 10'000;
+        static constexpr uint64_t RENDER_INTERVAL = CPU_HZ / 60;
+        static constexpr uint64_t EVENT_INTERVAL  = 10'000;
+        uint64_t next_render     = total_cycles + RENDER_INTERVAL;
         uint64_t next_event_poll = total_cycles + EVENT_INTERVAL;
+        uint64_t pace_last_cycle = total_cycles;
+        uint64_t pace_last_ns    = SDL_GetTicksNS();
 
-        auto poll_events = [&]() {
-            if (!renderer.poll_events([&](bool is_down, int sc) {
-                if (is_down && sc == SDL_SCANCODE_ESCAPE) { quit = true; return; }
-                handle_key(is_down, sc, btn);
-                portctrl.set_k5(btn.k5);
-                portctrl.set_k6(btn.k6);
-            })) {
-                quit = true;
-            }
+        // Read button state from main thread and check quit flag.
+        auto poll_buttons = [&]() {
+            uint16_t v = shared_buttons.load(std::memory_order_relaxed);
+            periph.portctrl.set_k5(static_cast<uint8_t>(v >> 8));
+            periph.portctrl.set_k6(static_cast<uint8_t>(v));
+            quit = quit_flag.load(std::memory_order_relaxed);
         };
 
-        // Helper: render current LCD VRAM to the SDL window.
-        auto render_frame = [&]() {
-            static uint64_t frame_no = 0;
-            ++frame_no;
-            if (frame_no % 60 == 0) {
-                std::fprintf(stderr,
-                    "[FRAME] #%llu pc=0x%06X halt=%d nmi=%llu total=%llu\n",
-                    (unsigned long long)frame_no,
-                    cpu.state.pc,
-                    (int)cpu.state.in_halt,
-                    (unsigned long long)nmi_count,
-                    (unsigned long long)total_cycles);
-            }
-            uint8_t px[88][128];
-            lcd.to_pixels(px);
-            renderer.render(px);
-        };
-
-        // Helper: real-time pacing — sleep to stay at ~60 fps.
-        auto pace_frame = [&]() {
-            uint64_t now_ns    = SDL_GetTicksNS();
-            uint64_t elapsed   = now_ns - frame_start_ns;
-            if (elapsed < FRAME_NS)
-                SDL_DelayNS(FRAME_NS - elapsed);
-            frame_start_ns = SDL_GetTicksNS();
-            next_frame += CYCLES_PER_FRAME;
+        // Real-time pacing: sleep until wall time matches simulated time.
+        auto sync_realtime = [&]() {
+            uint64_t expected_ns = (total_cycles - pace_last_cycle)
+                                   * 1'000'000'000ULL / CPU_HZ;
+            uint64_t now_ns      = SDL_GetTicksNS();
+            uint64_t wall_ns     = now_ns - pace_last_ns;
+            if (wall_ns < expected_ns)
+                SDL_DelayNS(expected_ns - wall_ns);
+            pace_last_cycle = total_cycles;
+            pace_last_ns    = SDL_GetTicksNS();
         };
 
         while (!quit && !cpu.state.fault) {
 
             // =================================================================
-            // GDB RSP async mode: RSP client is connected.
-            // CPU stepping is driven by RSP run commands ('c'/'s').
-            // SDL rendering still happens at frame rate.
+            // GDB RSP async mode
             // =================================================================
             if (gdb_rsp && gdb_rsp->has_async_client()) {
                 bool single_step = false;
                 if (gdb_rsp->take_async_run_cmd(&single_step)) {
                     if (single_step) {
-                        // --- Step one instruction ----------------------------
-                        if (trace) {
+                        if (cfg.trace) {
                             std::string dis = cpu.disasm(cpu.state.pc);
                             std::fprintf(stderr, "  %s\n", dis.c_str());
                         }
                         bus.debug_pc = cpu.state.pc;
                         total_cycles += cpu.step();
-                        tick_all(total_cycles);
+                        periph.tick(total_cycles);
                         gdb_rsp->notify_async_stopped(
                             gdb_rsp->make_async_stop_reply());
                     } else {
-                        // --- Continue until breakpoint/halt/fault/watchpoint -
+                        // Continue until breakpoint/halt/fault/watchpoint
                         while (!cpu.state.in_halt && !cpu.state.fault) {
-                            if (trace) {
+                            if (cfg.trace) {
                                 std::string dis = cpu.disasm(cpu.state.pc);
                                 std::fprintf(stderr, "  %s\n", dis.c_str());
                             }
@@ -397,65 +377,45 @@ int main(int argc, char** argv)
                                 break;
                             }
                             total_cycles += cpu.step();
-                            tick_all(total_cycles);
+                            periph.tick(total_cycles);
 
-                            // RSP breakpoints take priority over in_halt check
                             if (!cpu.state.in_halt
                                     && gdb_rsp->has_breakpoint(cpu.state.pc))
                                 break;
 
-                            // Render + handle SDL events at each frame boundary
-                            // so the window stays responsive during long runs.
                             if (total_cycles >= next_event_poll) {
-                                poll_events();
+                                poll_buttons();
                                 next_event_poll = total_cycles + EVENT_INTERVAL;
-                            }
-                            if (total_cycles >= next_frame) {
-                                render_frame();
-                                poll_events();
-                                pace_frame();
-                                if (quit) {
-                                    cpu.state.in_halt = true;
-                                    break;
-                                }
+                                if (quit) { cpu.state.in_halt = true; break; }
                             }
                         }
 
-                        // Handle HLT: fast-forward to nearest wakeup
                         if (cpu.state.in_halt && !cpu.state.fault) {
-                            uint64_t wake = find_next_wake();
+                            uint64_t wake = periph.next_wake_cycle();
                             if (wake != UINT64_MAX) {
                                 total_cycles = wake;
-                                tick_all(total_cycles);
+                                periph.tick(total_cycles);
                             }
                         }
-
                         gdb_rsp->notify_async_stopped(
                             gdb_rsp->make_async_stop_reply());
                     }
                 } else {
-                    // RSP client connected but CPU paused (waiting for command).
-                    // Keep SDL window alive and handle events.
-                    if (total_cycles >= next_frame) {
-                        render_frame();
-                        poll_events();
-                        pace_frame();
-                    } else {
-                        poll_events();
-                        SDL_DelayNS(1'000'000); // 1 ms idle sleep
-                    }
+                    // RSP connected but CPU paused — just idle
+                    SDL_DelayNS(1'000'000);
+                    poll_buttons();
+                    pace_last_cycle = total_cycles;
+                    pace_last_ns    = SDL_GetTicksNS();
                 }
-                continue; // back to top of outer while
+                continue;
             }
 
             // =================================================================
-            // Normal (no RSP client) mode: run CPU freely at 60 fps.
+            // Normal mode: run CPU; pace at RENDER_INTERVAL boundary.
             // =================================================================
-
-            // --- Run CPU for one frame ---
-            while (!cpu.state.in_halt && !cpu.state.fault
-                   && total_cycles < next_frame) {
-                if (trace) {
+            while (!cpu.state.in_halt && !cpu.state.fault && !quit
+                   && total_cycles < next_render) {
+                if (cfg.trace) {
                     std::string dis = cpu.disasm(cpu.state.pc);
                     std::fprintf(stderr, "  %s\n", dis.c_str());
                 }
@@ -465,56 +425,161 @@ int main(int argc, char** argv)
                     print_reg_snapshot(cpu.state);
                 }
                 total_cycles += cpu.step();
-                tick_all(total_cycles);
+                periph.tick(total_cycles);
 
-                // Drain SDL events at intra-frame intervals so short presses
-                // (press+release within one 400K-cycle frame) are not missed.
                 if (total_cycles >= next_event_poll) {
-                    poll_events();
+                    poll_buttons();
                     next_event_poll = total_cycles + EVENT_INTERVAL;
+                }
+
+                if (cfg.max_cycles && total_cycles >= cfg.max_cycles) {
+                    std::fprintf(stderr, "Reached max-cycles limit (%llu)\n",
+                        (unsigned long long)total_cycles);
+                    quit = true;
+                    break;
                 }
             }
 
-            if (cpu.state.fault) break;
-            if (max_cycles && total_cycles >= max_cycles) {
-                std::fprintf(stderr, "Reached max-cycles limit (%llu)\n",
-                    (unsigned long long)total_cycles);
-                break;
-            }
+            if (cpu.state.fault || quit) break;
 
-            // Handle HLT/SLEEP: fast-forward to nearest wakeup within frame.
             if (cpu.state.in_halt) {
-                uint64_t wake = find_next_wake();
+                uint64_t wake = periph.next_wake_cycle();
                 if (wake == UINT64_MAX) {
                     std::fprintf(stderr,
                         "Deadlock: CPU halted with no wakeup after %llu cycles\n",
                         (unsigned long long)total_cycles);
                     break;
                 }
-                uint64_t target = std::min(wake, next_frame);
-                uint64_t delta = target - total_cycles;
-                if (delta > CPU_HZ) { // more than 1 second fast-forward
+                uint64_t target = std::min(wake, next_render);
+                uint64_t delta  = target - total_cycles;
+                if (delta > CPU_HZ) {
                     std::fprintf(stderr,
                         "[HALT-JUMP] delta=%llu wake=%llu wdt=%llu"
                         " t16[0]=%llu t16[1]=%llu\n",
                         (unsigned long long)delta,
                         (unsigned long long)wake,
-                        (unsigned long long)wdt.next_wake_cycle(),
-                        (unsigned long long)t16_ch[0].next_wake_cycle(),
-                        (unsigned long long)t16_ch[1].next_wake_cycle());
+                        (unsigned long long)periph.wdt.next_wake_cycle(),
+                        (unsigned long long)periph.t16_ch[0].next_wake_cycle(),
+                        (unsigned long long)periph.t16_ch[1].next_wake_cycle());
                 }
                 total_cycles = target;
-                tick_all(total_cycles);
+                periph.tick(total_cycles);
             }
 
-            // --- Frame boundary: render + events ---
-            if (total_cycles >= next_frame) {
-                render_frame();
-                poll_events();
-                pace_frame();
+            if (total_cycles >= next_render) {
+                sync_realtime();
+                next_render += RENDER_INTERVAL;
             }
         }
 
+        quit_flag.store(true, std::memory_order_relaxed); // wake main thread
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Entry point
+// ---------------------------------------------------------------------------
+int main(int argc, char** argv)
+{
+    Config cfg = Config::parse(argc, argv);
+
+    try {
+        Bus bus(cfg.sram_size, cfg.flash_size);
+        Cpu cpu(bus);
+
+        StderrDiagSink diag_sink;
+        cpu.set_diag(&diag_sink);
+        bus.set_diag(&diag_sink);
+
+        // Watchpoints
+        for (auto& s : cfg.wp_write_specs) { auto [a,sz]=parse_addr_size(s); bus.add_watchpoint(a,sz,WpType::WRITE); }
+        for (auto& s : cfg.wp_read_specs)  { auto [a,sz]=parse_addr_size(s); bus.add_watchpoint(a,sz,WpType::READ);  }
+        for (auto& s : cfg.wp_rw_specs)    { auto [a,sz]=parse_addr_size(s); bus.add_watchpoint(a,sz,WpType::RW);    }
+        bus.set_wp_callback(make_wp_callback(bus));
+
+        std::set<uint32_t> break_addrs;
+        for (auto& s : cfg.break_specs)
+            break_addrs.insert(static_cast<uint32_t>(std::stoul(s, nullptr, 0)));
+
+        uint64_t total_cycles = 0;
+
+        // Peripherals
+        PiecePeripherals periph;
+        periph.attach(bus, cpu);
+
+        // Snapshot LCD pixels to shared buffer on each HSDMA Ch0 completion.
+        uint64_t    hsdma_frame_no = 0;
+        LcdFrameBuf frame_buf;
+        periph.hsdma.on_ch0_complete = [&]() {
+            ++hsdma_frame_no;
+            if (hsdma_frame_no % 100 == 0) {
+                std::fprintf(stderr,
+                    "[FRAME] #%llu pc=0x%06X halt=%d nmi=%llu total=%llu\n",
+                    (unsigned long long)hsdma_frame_no,
+                    cpu.state.pc, (int)cpu.state.in_halt,
+                    (unsigned long long)periph.nmi_count,
+                    (unsigned long long)total_cycles);
+            }
+            uint8_t px[88][128];
+            periph.lcd.to_pixels(px);
+            frame_buf.push(px);
+        };
+
+        // Load PFI flash image
+        PfiInfo pfi_info = pfi_load(bus, cfg.pfi_path);
+        (void)pfi_info;
+        uint32_t entry = bus.read32(Bus::FLASH_BASE);
+        std::fprintf(stderr, "PFI loaded, reset vector=0x%06X\n", entry);
+        cpu.state.pc = entry;
+
+        // SDL3 renderer (must stay on this thread for SDL_RenderPresent)
+        LcdRenderer renderer;
+        if (!renderer.init(cfg.scale)) {
+            std::fprintf(stderr, "Failed to initialise SDL3 renderer\n");
+            return 1;
+        }
+
+        // GDB RSP server (async, background thread)
+        std::unique_ptr<GdbRsp> gdb_rsp;
+        if (cfg.gdb_port > 0) {
+            gdb_rsp = std::make_unique<GdbRsp>(bus, cpu, cfg.gdb_port, cfg.gdb_debug);
+            gdb_rsp->serve_async();
+        }
+
+        // Shared state: buttons and quit signal
+        std::atomic<bool>     quit_flag{false};
+        std::atomic<uint16_t> shared_buttons{0xFFFFu};
+
+        // CPU thread
+        CpuRunner runner{bus, cpu, periph, cfg, total_cycles,
+                         break_addrs, gdb_rsp, quit_flag, shared_buttons};
+        std::thread cpu_thread([&runner]{ runner.run(); });
+
+        // Main thread: SDL event loop + rendering
+        ButtonState btn;
+        uint8_t     px[88][128];
+
+        while (!quit_flag.load(std::memory_order_relaxed)) {
+            if (!renderer.poll_events([&](bool is_down, int sc) {
+                    if (is_down && sc == SDL_SCANCODE_ESCAPE) {
+                        quit_flag.store(true, std::memory_order_relaxed);
+                        return;
+                    }
+                    handle_key(is_down, sc, btn);
+                    shared_buttons.store(
+                        (static_cast<uint16_t>(btn.k5) << 8) | btn.k6,
+                        std::memory_order_relaxed);
+                })) {
+                quit_flag.store(true, std::memory_order_relaxed);
+            }
+
+            if (frame_buf.take(px))
+                renderer.render(px);
+
+            SDL_DelayNS(16'666'667ULL); // ~60 fps polling cadence
+        }
+
+        cpu_thread.join();
         renderer.destroy();
 
         if (cpu.state.fault)
