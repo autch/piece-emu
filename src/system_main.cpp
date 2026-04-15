@@ -316,12 +316,43 @@ struct CpuRunner {
 
         bool quit = false;
 
-        static constexpr uint64_t RENDER_INTERVAL = CPU_HZ / 60;
-        static constexpr uint64_t EVENT_INTERVAL  = 10'000;
-        uint64_t next_render     = total_cycles + RENDER_INTERVAL;
+        static constexpr uint64_t EVENT_INTERVAL = 10'000;
+        uint64_t next_render     = total_cycles + periph.clk.cpu_clock_hz() / 60;
         uint64_t next_event_poll = total_cycles + EVENT_INTERVAL;
         uint64_t pace_last_cycle = total_cycles;
         uint64_t pace_last_ns    = SDL_GetTicksNS();
+
+        // Timer-tick throttling: only call periph.tick() when the next timer
+        // event is due.  next_timer_wake is capped at EVENT_INTERVAL so that
+        // IO-write-induced timer config changes are picked up promptly.
+        uint64_t next_timer_wake = 0;
+
+        // Recompute the next timer wake point.
+        // Must be called after every periph.tick() and after clock changes.
+        auto update_timer_wake = [&]() {
+            uint64_t w = periph.next_wake_cycle();
+            next_timer_wake = (w == UINT64_MAX)
+                ? total_cycles + EVENT_INTERVAL
+                : std::min(w, total_cycles + EVENT_INTERVAL);
+        };
+        update_timer_wake();
+
+        // Tick all peripherals and refresh the wake point.
+        auto do_tick = [&]() {
+            periph.tick(total_cycles);
+            update_timer_wake();
+        };
+
+        // On CPU clock change: reset pace reference, render interval, and
+        // timer wake point (clock change affects all timer frequencies).
+        periph.clk.on_clock_change = [&](uint32_t new_hz) {
+            std::fprintf(stderr, "[CLK] CPU clock: %u MHz\n",
+                         new_hz / 1'000'000);
+            pace_last_cycle = total_cycles;
+            pace_last_ns    = SDL_GetTicksNS();
+            next_render     = total_cycles + new_hz / 60;
+            update_timer_wake();
+        };
 
         // Read button state from main thread and check quit flag.
         auto poll_buttons = [&]() {
@@ -332,9 +363,11 @@ struct CpuRunner {
         };
 
         // Real-time pacing: sleep until wall time matches simulated time.
+        // Uses the current CPU clock so 24/48 MHz switches are handled correctly.
         auto sync_realtime = [&]() {
+            uint32_t cur_hz      = periph.clk.cpu_clock_hz();
             uint64_t expected_ns = (total_cycles - pace_last_cycle)
-                                   * 1'000'000'000ULL / CPU_HZ;
+                                   * 1'000'000'000ULL / cur_hz;
             uint64_t now_ns      = SDL_GetTicksNS();
             uint64_t wall_ns     = now_ns - pace_last_ns;
             if (wall_ns < expected_ns)
@@ -358,7 +391,7 @@ struct CpuRunner {
                         }
                         bus.debug_pc = cpu.state.pc;
                         total_cycles += cpu.step();
-                        periph.tick(total_cycles);
+                        do_tick(); // single-step: always tick for accurate state
                         gdb_rsp->notify_async_stopped(
                             gdb_rsp->make_async_stop_reply());
                     } else {
@@ -377,7 +410,8 @@ struct CpuRunner {
                                 break;
                             }
                             total_cycles += cpu.step();
-                            periph.tick(total_cycles);
+                            if (total_cycles >= next_timer_wake)
+                                do_tick();
 
                             if (!cpu.state.in_halt
                                     && gdb_rsp->has_breakpoint(cpu.state.pc))
@@ -394,7 +428,7 @@ struct CpuRunner {
                             uint64_t wake = periph.next_wake_cycle();
                             if (wake != UINT64_MAX) {
                                 total_cycles = wake;
-                                periph.tick(total_cycles);
+                                do_tick();
                             }
                         }
                         gdb_rsp->notify_async_stopped(
@@ -425,7 +459,8 @@ struct CpuRunner {
                     print_reg_snapshot(cpu.state);
                 }
                 total_cycles += cpu.step();
-                periph.tick(total_cycles);
+                if (total_cycles >= next_timer_wake)
+                    do_tick();
 
                 if (total_cycles >= next_event_poll) {
                     poll_buttons();
@@ -452,7 +487,7 @@ struct CpuRunner {
                 }
                 uint64_t target = std::min(wake, next_render);
                 uint64_t delta  = target - total_cycles;
-                if (delta > CPU_HZ) {
+                if (delta > periph.clk.cpu_clock_hz()) {
                     std::fprintf(stderr,
                         "[HALT-JUMP] delta=%llu wake=%llu wdt=%llu"
                         " t16[0]=%llu t16[1]=%llu\n",
@@ -463,15 +498,16 @@ struct CpuRunner {
                         (unsigned long long)periph.t16_ch[1].next_wake_cycle());
                 }
                 total_cycles = target;
-                periph.tick(total_cycles);
+                do_tick(); // time jump: process all timer events up to new time
             }
 
             if (total_cycles >= next_render) {
                 sync_realtime();
-                next_render += RENDER_INTERVAL;
+                next_render += periph.clk.cpu_clock_hz() / 60;
             }
         }
 
+        periph.clk.on_clock_change = nullptr; // remove dangling lambda refs
         quit_flag.store(true, std::memory_order_relaxed); // wake main thread
     }
 };
@@ -512,7 +548,7 @@ int main(int argc, char** argv)
         LcdFrameBuf frame_buf;
         periph.hsdma.on_ch0_complete = [&]() {
             ++hsdma_frame_no;
-            if (hsdma_frame_no % 100 == 0) {
+            if (false && hsdma_frame_no % 100 == 0) {
                 std::fprintf(stderr,
                     "[FRAME] #%llu pc=0x%06X halt=%d nmi=%llu total=%llu\n",
                     (unsigned long long)hsdma_frame_no,

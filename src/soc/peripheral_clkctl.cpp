@@ -43,6 +43,7 @@ uint32_t ClockControl::t8_clock_hz(int ch) const
 
 void ClockControl::write_single(uint32_t addr, uint8_t val)
 {
+    ++config_gen_; // invalidate timer cpc caches on every register write
     switch (addr) {
     case 0x040146: clksel_t8_    = val; break;
     case 0x040147: clkctl_t16_[0] = val; break;
@@ -72,6 +73,7 @@ void ClockControl::set_p07(bool slow)
     uint8_t new_pwrctl = slow ? (pwrctl_ | 0x04u) : (pwrctl_ & ~0x04u);
     if (new_pwrctl == pwrctl_) return;
     pwrctl_ = new_pwrctl;
+    ++config_gen_;
     if (on_clock_change) on_clock_change(cpu_clock_hz());
 }
 

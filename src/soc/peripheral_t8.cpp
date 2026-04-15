@@ -7,10 +7,14 @@ static constexpr uint32_t T8_BASE = 0x040160;
 
 uint64_t Timer8bit::cycles_per_count() const
 {
-    uint32_t hz = clk_->t8_clock_hz(ch_);
-    if (hz == 0) return 0;
-    uint32_t cpu_hz = clk_->cpu_clock_hz();
-    return (cpu_hz + hz - 1) / hz; // ceiling division
+    uint32_t gen = clk_->config_gen();
+    if (gen != cpc_gen_) {
+        uint32_t hz = clk_->t8_clock_hz(ch_);
+        cached_cpc_ = (hz == 0) ? 0
+                                 : (clk_->cpu_clock_hz() + hz - 1) / hz;
+        cpc_gen_ = gen;
+    }
+    return cached_cpc_;
 }
 
 void Timer8bit::on_ctl_write(uint8_t val)

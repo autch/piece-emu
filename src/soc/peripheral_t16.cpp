@@ -7,11 +7,15 @@ static constexpr uint32_t T16_BASE = 0x048180;
 
 uint64_t Timer16bit::cycles_per_count() const
 {
-    int cksl = (ctl_ >> 3) & 1;
-    uint32_t hz = clk_->t16_clock_hz(ch_, cksl);
-    if (hz == 0) return 0;
-    uint32_t cpu_hz = clk_->cpu_clock_hz();
-    return (cpu_hz + hz - 1) / hz;
+    uint32_t gen = clk_->config_gen();
+    if (gen != cpc_gen_) {
+        int cksl = (ctl_ >> 3) & 1;
+        uint32_t hz = clk_->t16_clock_hz(ch_, cksl);
+        cached_cpc_ = (hz == 0) ? 0
+                                 : (clk_->cpu_clock_hz() + hz - 1) / hz;
+        cpc_gen_ = gen;
+    }
+    return cached_cpc_;
 }
 
 void Timer16bit::raise_cra()

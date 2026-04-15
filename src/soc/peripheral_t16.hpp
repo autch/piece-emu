@@ -65,6 +65,10 @@ private:
     InterruptController* intc_ = nullptr;
     const ClockControl*  clk_  = nullptr;
 
+    // Cached cycles-per-count (same invalidation scheme as Timer8bit).
+    mutable uint64_t cached_cpc_ = 0;
+    mutable uint32_t cpc_gen_    = UINT32_MAX;
+
     uint64_t cycles_per_count() const;
 
     // Helper: raise CRA or CRB interrupt for this channel

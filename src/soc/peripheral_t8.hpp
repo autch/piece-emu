@@ -52,6 +52,11 @@ private:
     InterruptController* intc_ = nullptr;
     const ClockControl*  clk_  = nullptr;
 
+    // Cached cycles-per-count.  Recomputed lazily when clk_->config_gen()
+    // differs from the generation at which cpc_ was last computed.
+    mutable uint64_t cached_cpc_ = 0;
+    mutable uint32_t cpc_gen_    = UINT32_MAX; // mismatches any real gen
+
     // CPU cycles per one timer count. Returns 0 if clock is stopped.
     uint64_t cycles_per_count() const;
 

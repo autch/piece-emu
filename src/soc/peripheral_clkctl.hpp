@@ -48,6 +48,11 @@ public:
     // Current CPU clock frequency in Hz.
     uint32_t cpu_clock_hz() const;
 
+    // Monotonically-increasing generation counter.  Incremented on every write
+    // to any clock-control register (CLKSEL, CLKCTL, PWRCTL).  Timers compare
+    // their cached-cpc generation against this to decide when to recompute.
+    uint32_t config_gen() const { return config_gen_; }
+
     // Input clock for 16-bit timer channel ch (0..5).
     // Returns 0 if the selected clock source is disabled.
     // cksl: 0 = clock A, 1 = clock B (from timer's own CTL.CKSL bit)
@@ -73,6 +78,7 @@ public:
     uint8_t clkctl_t8_23()    const { return clkctl_t8_23_; }
 
 private:
+    uint32_t config_gen_  = 0;   // incremented on any register write
     uint8_t clksel_t8_    = 0;   // 0x040146
     uint8_t clkctl_t16_[6] = {}; // 0x040147-0x04014C
     uint8_t clkctl_t8_01_ = 0;   // 0x04014D
