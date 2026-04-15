@@ -69,7 +69,17 @@ private:
     mutable uint64_t cached_cpc_ = 0;
     mutable uint32_t cpc_gen_    = UINT32_MAX;
 
+    // Cached result of next_wake_cycle().  Updated at the end of every tick()
+    // and after any register write that changes timer state (CRA/CRB/TC/CTL).
+    // next_wake_cycle() simply returns this value, eliminating all arithmetic
+    // from the hot path in update_timer_wake().
+    uint64_t cached_wake_ = UINT64_MAX;
+
     uint64_t cycles_per_count() const;
+
+    // Recompute cached_wake_ from current state.  Called by tick() and by
+    // register-write I/O handlers.
+    void refresh_wake();
 
     // Helper: raise CRA or CRB interrupt for this channel
     void raise_cra();

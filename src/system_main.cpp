@@ -319,7 +319,13 @@ struct CpuRunner {
 
         bool quit = false;
 
-        static constexpr uint64_t EVENT_INTERVAL = 10'000;
+        static constexpr uint64_t EVENT_INTERVAL   = 10'000;
+        // Minimum CPU cycles between do_tick() calls.  High-frequency timers
+        // (e.g. audio DMA at ~44 kHz ≈ 544 cycles/interrupt) would otherwise
+        // fragment the fast-path burst into tiny slices.  Each tick fires at
+        // most MIN_TICK_BURST cycles late in emulated time (at 24 MHz:
+        // 2000 cycles ≈ 83 µs — well within one SIF3 audio frame).
+        static constexpr uint64_t MIN_TICK_BURST  =  2'000;
         uint64_t next_render     = total_cycles + periph.clk.cpu_clock_hz() / 60;
         uint64_t next_event_poll = total_cycles + EVENT_INTERVAL;
         uint64_t pace_last_cycle = total_cycles;
@@ -332,11 +338,18 @@ struct CpuRunner {
 
         // Recompute the next timer wake point.
         // Must be called after every periph.tick() and after clock changes.
+        // next_wake_cycle() is O(1) (cached in each timer after tick()).
+        // Enforce MIN_TICK_BURST so high-frequency timers don't shatter bursts.
         auto update_timer_wake = [&]() {
             uint64_t w = periph.next_wake_cycle();
-            next_timer_wake = (w == UINT64_MAX)
-                ? total_cycles + EVENT_INTERVAL
-                : std::min(w, total_cycles + EVENT_INTERVAL);
+            if (w == UINT64_MAX) {
+                next_timer_wake = total_cycles + EVENT_INTERVAL;
+            } else {
+                // Clamp: never sooner than MIN_TICK_BURST, never later than EVENT_INTERVAL.
+                uint64_t earliest = total_cycles + MIN_TICK_BURST;
+                uint64_t latest   = total_cycles + EVENT_INTERVAL;
+                next_timer_wake   = std::clamp(w, earliest, latest);
+            }
         };
         update_timer_wake();
 
