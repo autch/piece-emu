@@ -16,6 +16,12 @@
           "features": ["sdl3-binding", "sdl3-renderer-binding"]
         }
       ]
+    },
+    "ripper": {
+      "description": "Real-hardware flash ripper tool via USB (Windows: vcpkg libusb; Linux/macOS: system libusb-1.0 via pkg-config)",
+      "dependencies": [
+        { "name": "libusb", "platform": "windows" }
+      ]
     }
   }
 }

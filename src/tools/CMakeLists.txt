@@ -20,9 +20,19 @@ target_link_libraries(pfar PRIVATE piece_pfi)
 # ---------------------------------------------------------------------------
 # Real-hardware tools (require libusb-1.0)
 # ---------------------------------------------------------------------------
-find_package(PkgConfig QUIET)
-if(PkgConfig_FOUND)
-    pkg_check_modules(LIBUSB QUIET libusb-1.0)
+# Windows: use vcpkg's libusb port (unofficial-libusb, target unofficial::libusb::libusb).
+# Linux/macOS: fall back to the system libusb-1.0 via pkg-config.
+if(WIN32)
+    find_package(unofficial-libusb CONFIG QUIET)
+    if(unofficial-libusb_FOUND)
+        set(LIBUSB_FOUND TRUE)
+        set(LIBUSB_LINK_LIBRARIES unofficial::libusb::libusb)
+    endif()
+else()
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(LIBUSB QUIET libusb-1.0)
+    endif()
 endif()
 
 if(LIBUSB_FOUND)

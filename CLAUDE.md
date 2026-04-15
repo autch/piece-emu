@@ -185,8 +185,25 @@ Ignoring `addr & 1` silently corrupts the adjacent byte of every register pair.
 ## GDB RSP Modes
 
 - `piece-emu --gdb [port] <elf>` — **sync mode**: RSP server blocks and steps CPU directly in one thread
-- `piece-emu-system --gdb-port N --pfi ...` — **async mode**: RSP server in background thread; CPU stepped by SDL main loop via `GdbRsp::take_async_run_cmd()` / `notify_async_stopped()`; SDL window stays live during continue runs
+- `piece-emu-system --gdb-port N --pfi ...` — **async mode**: RSP server in `piece-gdb` background thread; CPU runs in dedicated `piece-cpu` thread and polls `GdbRsp::take_async_run_cmd()` / calls `notify_async_stopped()`; SDL window stays live during continue runs
 - Both GDB and LLDB (MCP) clients work with either mode
+
+## Threading Model (piece-emu-system)
+
+`piece-emu-system` uses three threads:
+- **`piece-cpu`** (`std::thread`): `CpuRunner::run()` — CPU step loop, peripherals, timers
+- **`piece-sdl`** (main thread): SDL3 event polling + `LcdRenderer::render()` — SDL rendering **must** stay on the main thread
+- **`piece-gdb`** (optional): GDB RSP async server
+
+Shared state: `LcdFrameBuf` (mutex-protected pixel snapshot; CPU calls `push()` on HSDMA Ch0 completion, main thread calls `take()` at ~60 Hz; latest frame wins on drop), `std::atomic<bool> quit_flag`, `std::atomic<uint16_t> shared_buttons`.
+
+## CPU Loop Performance Design
+
+Key constants in `system_main.cpp`: `EVENT_INTERVAL = 10'000` cycles (SDL poll interval / max timer wake delay), `MIN_TICK_BURST = 2'000` cycles (minimum cycles before `do_tick()`).
+Fast-path inner loop activates when: no `--trace`, no break addresses, no `--max-cycles`, no watchpoints.
+`Bus::read16/fetch16` bypass `classify()` with inline fast paths: SRAM (`addr - SRAM_BASE < SRAM_WINDOW`) then Flash/open-bus (`addr >= FLASH_BASE`).
+`Cpu::h_mac` has O(1) open-bus fast path for pdwait (pointers at 0x1000000 always return 0xFFFF).
+`Timer16bit::tick()` O(1): `N = (tc+counts)/cra`, `final_tc = (tc+counts)%cra`; ISR is level-triggered (raise once == N times).
 
 ## S1C33000 CPU Critical Facts
 

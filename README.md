@@ -2,12 +2,12 @@
 
 実機なら黙って流す怪しい動作を積極的に検出する、アクアプラス P/ECE（EPSON S1C33209 SoC）向けの diagnostic エミュレータです。
 GDB RSP とセミホスティングにより、コンパイラ開発のデバッグ基盤として機能します。
-P2-2 フェーズ実装済み：SDL3 フルシステムフロントエンド（LCD 表示・ボタン入力）、非同期 GDB RSP 対応。
+P2-2 フェーズ実装済み：SDL3 フルシステムフロントエンド（LCD 表示・ボタン入力）、CPU/SDL スレッド分離、非同期 GDB RSP 対応、O(1) タイマ解析によるホスト CPU 使用率 ~50% を達成。
 
 A diagnostic S1C33209 emulator for the Aquaplus P/ECE handheld.
 Catches dubious-but-silently-ignored patterns that real hardware would let slip.
 GDB RSP + semihosting for compiler development.
-P2-2 complete: SDL3 full-system frontend with LCD display, button input, and async GDB RSP (LLDB-compatible).
+P2-2 complete: SDL3 full-system frontend with LCD display and button input; CPU/SDL thread separation; async GDB RSP (LLDB-compatible); O(1) timer analytics achieving ~50% host CPU usage.
 
 ---
 
@@ -19,7 +19,7 @@ P2-2 complete: SDL3 full-system frontend with LCD display, button input, and asy
 | ターゲットデバイス | Aquaplus P/ECE |
 | 言語 | C++20 |
 | ビルドシステム | CMake + Ninja |
-| ステータス | **P2-2 フェーズ実装済み** — 全命令・周辺デバイス・GDB RSP（同期/非同期）・セミホスティング・HLT/SLEEP 高速スキップ・PFI ブート・SDL3 LCD 表示・ボタン入力・LLDB MCP 対応 |
+| ステータス | **P2-2 フェーズ実装済み** — 全命令・周辺デバイス・GDB RSP（同期/非同期）・セミホスティング・HLT/SLEEP 高速スキップ・PFI ブート・SDL3 LCD 表示・ボタン入力・LLDB MCP 対応・CPU/SDL スレッド分離・O(1) タイマ解析（ホスト CPU ~50%） |
 
 ### 設計方針 / Design Philosophy
 
@@ -145,7 +145,7 @@ piece-emu/
 │   ├── main.cpp                    CLI フロントエンド (piece-emu) / CLI front-end
 │   ├── system_main.cpp             SDL3 フロントエンド (piece-emu-system) / SDL3 front-end
 │   ├── CMakeLists.txt
-│   ├── vcpkg.json                  依存ライブラリ（GTest, CLI11, SDL3）/ Dependencies
+│   ├── vcpkg.json                  依存ライブラリ（GTest, CLI11, SDL3, ImGui; Windows では libusb も）/ Dependencies
 │   └── tests/
 │       ├── unit/                   C++ ユニットテスト（GTest）158 テスト
 │       │   ├── test_cpu_instructions.cpp
@@ -188,16 +188,30 @@ piece-emu/
 
 ```sh
 # Debian/Ubuntu
-sudo apt install git cmake ninja-build g++
+sudo apt install git cmake ninja-build g++ pkg-config
 ```
 
-vcpkg（GTest・CLI11 の自動インストールに使用）が必要です。
-vcpkg is required (used to install GTest and CLI11 automatically).
+vcpkg（GTest・CLI11・SDL3・ImGui の自動インストールに使用）が必要です。
+vcpkg is required (used to install GTest, CLI11, SDL3, and ImGui automatically).
 
 ```sh
 git clone https://github.com/microsoft/vcpkg.git ~/vcpkg
 ~/vcpkg/bootstrap-vcpkg.sh
 ```
+
+**ripper ツール**（実機フラッシュ吸い出し）を使う場合、libusb-1.0 が別途必要です。
+**ripper tool** (real-hardware flash dump) requires libusb-1.0:
+
+```sh
+# Debian/Ubuntu
+sudo apt install libusb-1.0-0-dev
+
+# macOS (Homebrew)
+brew install libusb
+```
+
+Windows では vcpkg がビルド時に自動インストールします（後述の `ripper` フィーチャーを参照）。
+On Windows, vcpkg installs libusb automatically when the `ripper` feature is enabled (see below).
 
 ### ビルド / Build
 
@@ -207,12 +221,24 @@ cmake -S src -B build-src -G Ninja \
 ninja -C build-src
 ```
 
-SDL3 フロントエンドも同時にビルドするには `vcpkg.json` の features に `system` を指定します：
+**vcpkg フィーチャー / vcpkg features:**
+
+| フィーチャー | 内容 | 追加される依存 |
+|---|---|---|
+| `system` | SDL3 フルシステムフロントエンド + Dear ImGui | `sdl3`, `imgui` |
+| `ripper` | 実機 USB フラッシュ吸い出しツール（Windows のみ vcpkg で libusb を取得） | `libusb`（Windows のみ）|
 
 ```sh
+# SDL3 フロントエンドをビルド
 cmake -S src -B build-src -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE=~/vcpkg/scripts/buildsystems/vcpkg.cmake \
   -DVCPKG_MANIFEST_FEATURES=system
+ninja -C build-src
+
+# SDL3 + ripper をビルド（Windows; Linux/macOS では libusb-1.0-0-dev を事前にインストール）
+cmake -S src -B build-src -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE=~/vcpkg/scripts/buildsystems/vcpkg.cmake \
+  -DVCPKG_MANIFEST_FEATURES="system;ripper"
 ninja -C build-src
 ```
 
@@ -222,6 +248,9 @@ ninja -C build-src
 - `build-src/libpiece_core.a` — CPU コア・BCU・逆アセンブラ / CPU core, BCU, disassembler
 - `build-src/libpiece_soc.a` — S1C33209 オンチップ周辺デバイス / On-chip peripherals
 - `build-src/libpiece_debug.a` — ELF ローダ・セミホスティング・GDB RSP / ELF loader, semihosting, GDB RSP
+- `build-src/tools/mkpfi` — PFI フラッシュイメージ作成ツール / PFI flash image creator
+- `build-src/tools/pfar` — PFFS アーカイバ / PFFS archiver
+- `build-src/tools/ripper` — USB 経由実機フラッシュ吸い出し（libusb-1.0 必須）/ Real-hardware flash ripper via USB
 
 ---
 
@@ -262,6 +291,17 @@ lldb
 ./build-src/piece-emu --flash-size 2097152 test.elf  # 2 MB Flash
 ```
 
+### キー操作（piece-emu-system）/ Keyboard Controls
+
+| キー | P/ECE ボタン |
+|---|---|
+| `←` `→` `↑` `↓` | 十字キー / D-pad |
+| `Z` | B ボタン / B button |
+| `X` | A ボタン / A button |
+| `Enter` | START |
+| `Backspace` | SELECT |
+| `Esc` | エミュレータ終了 / Quit |
+
 ### エミュレータメモリマップ / Emulator Memory Map
 
 ```
@@ -269,6 +309,87 @@ lldb
 0x030000–0x07FFFF   I/O + semihosting (0x060000)
 0x100000–0x13FFFF   SRAM  (デフォルト 256 KB、--sram-size で変更可)
 0xC00000+           Flash (デフォルト 512 KB、--flash-size で変更可)
+```
+
+---
+
+## ホストユーティリティ / Host Utilities
+
+エミュレータ本体とは別に、P/ECE フラッシュイメージ（PFI）を操作するためのコマンドラインツールが `src/tools/` に含まれています。
+
+In addition to the emulator, `src/tools/` provides command-line tools for managing P/ECE flash images (PFI).
+
+### mkpfi — PFI フラッシュイメージ作成 / Create PFI Flash Image
+
+P/ECE カーネルバイナリ（`all.bin`）から PFI フラッシュイメージを生成します。
+
+Creates a PFI flash image from a raw P/ECE kernel binary (`all.bin`).
+
+```sh
+mkpfi [-512kb|-2mb] all.bin [piece.pfi]
+```
+
+| オプション | 説明 |
+|---|---|
+| `-512kb` | 512 KB フラッシュ用イメージを生成（デフォルト）/ 512 KB flash image (default) |
+| `-2mb` | 2 MB フラッシュ用イメージを生成（改造 P/ECE 向け）/ 2 MB flash image (for modded P/ECE) |
+| `all.bin` | P/ECE カーネルバイナリ（必須）/ P/ECE kernel binary (required) |
+| `piece.pfi` | 出力ファイル名（省略時: `piece.pfi`）/ Output filename (default: `piece.pfi`) |
+
+### pfar — PFFS アーカイバ / PFFS Archiver
+
+PFI フラッシュイメージ内の PFFS ファイルシステムを操作します。
+ゲームアプリ（`.pex`）などのファイルを追加・削除・抽出できます。
+
+Manages files inside a PFI flash image's PFFS filesystem.
+Add, delete, or extract game applications (`.pex`) and other files.
+
+```sh
+pfar piece.pfi [-a|-d|-e|-l|-v] [file [...]]
+```
+
+| オプション | 説明 |
+|---|---|
+| `-a` | ファイルを PFFS に追加 / Add file(s) to PFFS |
+| `-d` | ファイルを PFFS から削除 / Delete file(s) from PFFS |
+| `-e` | ファイルを PFFS からディスクに展開 / Extract file(s) to disk |
+| `-l` | PFFS ディレクトリを一覧表示（デフォルト）/ List PFFS directory (default) |
+| `-v` | PFI システム情報を表示 / Show PFI system info |
+
+```sh
+# PFFS 内のファイル一覧を表示
+pfar piece.pfi -l
+
+# ゲームを追加
+pfar piece.pfi -a mygame.pex
+
+# ゲームを展開
+pfar piece.pfi -e mygame.pex
+
+# システム情報（H/W バージョン・BIOS・クロック・メモリマップ）を表示
+pfar piece.pfi -v
+```
+
+### ripper — 実機フラッシュ吸い出し / Real-Hardware Flash Ripper
+
+USB 接続した P/ECE 実機からフラッシュ全域を読み出し、PFI ファイルとして保存します。
+libusb-1.0 が必要です（Linux/macOS: システムパッケージ、Windows: vcpkg `ripper` フィーチャー）。
+
+Reads the full flash contents from a USB-connected P/ECE and saves it as a PFI file.
+Requires libusb-1.0 (Linux/macOS: system package; Windows: vcpkg `ripper` feature).
+
+```sh
+ripper [output.pfi]
+# Default output: piece.pfi
+```
+
+P/ECE USB の VID/PID は `0x0e19` / `0x1000` です。Linux では root 権限またはデバイスアクセスを許可する udev ルールが必要です。
+
+The P/ECE USB VID/PID is `0x0e19` / `0x1000`. On Linux, root access or a udev rule granting access to the device is required.
+
+```sh
+# udev ルール例 / Example udev rule (/etc/udev/rules.d/99-piece.rules)
+SUBSYSTEM=="usb", ATTR{idVendor}=="0e19", ATTR{idProduct}=="1000", MODE="0666"
 ```
 
 ---
