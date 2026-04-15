@@ -63,21 +63,20 @@ $ lldb
 (lldb) c
 ```
 
-#### システムモード（P2-1 実装済み / P2-2 以降未実装）
+#### システムモード（P2-2 実装済み）
 
 ゲーム実行用。カーネル込みのフルシステムエミュレーション。
 
 - **P2-1 実装済み**: PFI イメージからフラッシュ全体をロードし、リセットベクタからブート。カーネルが AppStart まで到達することを確認済み。
-- **P2-2 以降未実装**: LCD 表示（S6B0741 + SDL3）、サウンド出力、ボタン入力
-- GUI は SDL3 + imgui を想定
-- デバッガを付けるが、GDB RSPだけか自前のデバッガUIを持つかは未定
+- **P2-2 実装済み**: SDL3 フルシステムフロントエンド（`piece-emu-system`）。LCD 表示（S6B0741）、ボタン入力（K5/K6）、非同期 GDB RSP 対応。
+- **P2-3 以降未実装**: サウンド出力（PWM + SDL3 Audio）、Flash 書き込み
 
 ```
-# フルシステムエミュレーション
-$ piece-emu --pfi piece.pfi
+# SDL3 フルシステムフロントエンド
+$ piece-emu-system --pfi images/old/piece.pfi
 
-# システムモードでもデバッガ接続可能
-$ piece-emu --pfi piece.pfi --gdb 1234
+# 非同期 GDB RSP 付き（LLDB MCP 対応）
+$ piece-emu-system --pfi images/old/piece.pfi --gdb-port 1234
 ```
 
 #### 共通基盤の構造
@@ -95,24 +94,28 @@ libpiece_soc.a   (src/soc/) → piece_core
 ├── PortCtrl / BcuArea / WDT / RTC
 └── SIF3 / HSDMA
 
-piece_board      (src/board/, INTERFACE) → piece_soc
-└── (将来: S6B0741 LCD, NAND Flash, PDIUSBD12 USB, SDカード)
+libpiece_board.a (src/board/) → piece_soc
+├── S6B0741 LCD コントローラ
+└── (将来: NAND Flash, PDIUSBD12 USB)
+
+libpiece_host.a  (src/host/) → piece_board, SDL3
+└── LcdRenderer — S6B0741 VRAM → SDL3 テクスチャ
 
 libpiece_debug.a (src/debug/) → piece_core
 ├── ELFローダ
 ├── PFIローダ
 ├── セミホスティング
-└── GDB RSP
+└── GDB RSP（sync / async 両モード）
 
 piece-emu          (ベアメタルモード実行バイナリ)
 ├── piece_debug + piece_board + piece_soc + piece_core
-├── CLI フロントエンド
+├── CLI フロントエンド（--wp-write/--wp-read/--wp-rw/--break-at）
 └── 外部依存: なし（POSIXのみ）
 
-piece-emu-system   (システムモード実行バイナリ、将来)
-├── piece_debug + piece_board + piece_soc + piece_core
-├── GUI フロントエンド
-├── LCD / Sound / Input
+piece-emu-system   (システムモード実行バイナリ)
+├── piece_host + piece_debug + piece_board + piece_soc + piece_core
+├── SDL3 GUI フロントエンド（LCD 表示・ボタン入力・60fps）
+├── 非同期 GDB RSP（--gdb-port）— SDL main loop と2スレッド協調
 └── 外部依存: SDL3
 ```
 
@@ -1055,8 +1058,9 @@ MAME の設計で特に倣うべきは、CPUデバイスとメモリ空間の抽
 | **P2-1** ✅ | PFIイメージローダ | フルシステムエミュレーション（カーネル起動→AppStart到達確認） |
 | **P2-1** ✅ | SIF3 シリアル I/F | TXD/STATUS/CTL レジスタ、HSDMA Ch0 インライン DMA |
 | **P2-1** ✅ | HSDMA 高速 DMA | 4 チャネル、Ch0=LCD 転送、Ch1=サウンドコールバック |
-| **P2-2** | LCDコントローラ | S6B0741 SPI コマンド解釈、128×88 4階調表示 |
-| **P2-3** | ボタン入力 | SDL3 キーイベント → K5D/K6D マッピング |
+| **P2-2** ✅ | LCDコントローラ | S6B0741 SPI コマンド解釈、128×88 4階調表示（`src/board/s6b0741`） |
+| **P2-2** ✅ | SDL3 フロントエンド | `piece-emu-system`：LCD 表示・ボタン入力・60fps・非同期 GDB RSP |
+| **P2-2** ✅ | ボタン入力 | SDL3 キーイベント → K5D/K6D マッピング（piece-emu-system 内） |
 | **P2-4** | PWMサウンド | HSDMA Ch1 + SDL3 オーディオ出力 |
 | **P2-5** | Flash書き込み | SST39VF400A コマンドシーケンス、PFI書き戻し |
 | **P3** | USB (PDIUSBD12) | 将来拡張 |

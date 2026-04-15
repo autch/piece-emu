@@ -2,12 +2,12 @@
 
 実機なら黙って流す怪しい動作を積極的に検出する、アクアプラス P/ECE（EPSON S1C33209 SoC）向けの diagnostic エミュレータです。
 GDB RSP とセミホスティングにより、コンパイラ開発のデバッグ基盤として機能します。
-P2-1 フェーズ実装済み：PFI フラッシュイメージからのフルシステムブートに対応し、MMC カーネルが AppStart まで到達することを確認済み。
+P2-2 フェーズ実装済み：SDL3 フルシステムフロントエンド（LCD 表示・ボタン入力）、非同期 GDB RSP 対応。
 
 A diagnostic S1C33209 emulator for the Aquaplus P/ECE handheld.
 Catches dubious-but-silently-ignored patterns that real hardware would let slip.
 GDB RSP + semihosting for compiler development.
-P2-1 complete: full-system boot from PFI flash image; MMC kernel reaches AppStart.
+P2-2 complete: SDL3 full-system frontend with LCD display, button input, and async GDB RSP (LLDB-compatible).
 
 ---
 
@@ -19,7 +19,7 @@ P2-1 complete: full-system boot from PFI flash image; MMC kernel reaches AppStar
 | ターゲットデバイス | Aquaplus P/ECE |
 | 言語 | C++20 |
 | ビルドシステム | CMake + Ninja |
-| ステータス | **P2-1 フェーズ実装済み** — 全命令・周辺デバイス・GDB RSP・セミホスティング・HLT/SLEEP 高速スキップ・PFI ブート・カーネル AppStart 到達確認 |
+| ステータス | **P2-2 フェーズ実装済み** — 全命令・周辺デバイス・GDB RSP（同期/非同期）・セミホスティング・HLT/SLEEP 高速スキップ・PFI ブート・SDL3 LCD 表示・ボタン入力・LLDB MCP 対応 |
 
 ### 設計方針 / Design Philosophy
 
@@ -56,12 +56,13 @@ All ISA classes (0–6) implemented. Includes disassembler, PSR flags, EXT immed
 | ClkCtl（クロック制御）| 0x040140 | CPU クロック選択（24/48 MHz）、P07 連携 |
 | Timer8bit × 4 | 0x048100– | PTRUN/PSET/PRLD、アンダーフロー IRQ、`next_wake_cycle()` |
 | Timer16bit × 6 | 0x048180– | PRUN/PRESET/CRA/CRB 比較、SELFM、`next_wake_cycle()` |
-| PortCtrl | 0x0402C0– | K5/K6 入力、P ポート出力、P07→ClkCtl 通知、KEY IRQ |
+| PortCtrl | 0x0402C0– | K5/K6 入力、P ポート出力（バイト書き込み対応）、P07→ClkCtl 通知、KEY IRQ、p21d() |
 | BcuAreaCtrl | 0x040020 | トラップテーブルベースレジスタ（TTBR）書き込み |
 | WDT（ウォッチドッグ）| 0x040170 | NMI 発火（1 ms 周期）、ClockTicks インクリメント経路 |
 | RTC（計時タイマ）| 0x040150 | 1 Hz クロックフラグ（rRTCSEL bit3）トグル、GetSysClock() 対応 |
 | SIF3（シリアル I/F）| 0x0401F4 | TXD/STATUS/CTL レジスタ、HSDMA Ch0 インライン DMA |
 | HSDMA（高速 DMA）| 0x048220 | 4 チャネル、Ch0 = LCD 転送（SIF3 連動）、Ch1 = サウンド転送コールバック |
+| S6B0741 LCD | SIF3 経由 | コマンド/データデコード、128×88 VRAM、4 階調ピクセル変換 |
 
 ### HLT/SLEEP 高速スキップ / Fast-forward on HLT ✅
 
@@ -123,20 +124,28 @@ piece-emu/
 │   │   ├── peripheral_sif3.cpp/hpp SIF3 シリアル I/F（LCD 転送、HSDMA 連動）
 │   │   ├── peripheral_hsdma.cpp/hpp HSDMA 高速 DMA（4 チャネル）
 │   │   └── CMakeLists.txt
-│   ├── board/                      piece_board (INTERFACE) — 外付けデバイス（将来）
-│   │   └── CMakeLists.txt          S6B0741 LCD / NAND Flash / PDIUSBD12 USB (未実装)
+│   ├── board/                      libpiece_board.a — 外付けデバイス / Board external devices
+│   │   ├── s6b0741.cpp/hpp         Samsung S6B0741 LCD コントローラ / LCD controller
+│   │   └── CMakeLists.txt
 │   ├── debug/                      libpiece_debug.a — ELF ローダ / セミホスティング / GDB RSP
 │   │   ├── elf_loader.cpp          ELF ローダ / ELF loader
 │   │   ├── pfi_loader.cpp/hpp      PFI フラッシュイメージローダ / PFI flash image loader
 │   │   ├── semihosting.cpp         セミホスティング（全ポート実装済み）
-│   │   ├── gdb_rsp.cpp             GDB RSP スタブ / GDB RSP stub
+│   │   ├── gdb_rsp.cpp             GDB RSP スタブ（同期 + 非同期モード）/ GDB RSP stub
 │   │   ├── gdb_rsp_regs.cpp        GDB レジスタアクセス層 / Register access layer
 │   │   └── CMakeLists.txt
-│   ├── host/                       将来: SDL3 フロントエンド / Future SDL3 frontend
+│   ├── host/                       libpiece_host.a — SDL3 フロントエンド / SDL3 frontend
+│   │   ├── lcd_renderer.cpp/hpp    S6B0741 VRAM → SDL3 テクスチャ / LCD renderer
 │   │   └── CMakeLists.txt
-│   ├── main.cpp                    CLI フロントエンド / CLI front-end
+│   ├── tools/                      ホストユーティリティ（C）/ Host utilities (C)
+│   │   ├── mkpfi.c                 PFI イメージ作成 / Create PFI image
+│   │   ├── pfar.c                  PFFS アーカイバ / PFFS archiver
+│   │   └── ripper.c                USB 経由フラッシュ読み出し / Flash ripper via USB
+│   ├── pfi_format.h                PFI/PFFS 共有構造体定義 / Shared PFI struct definitions
+│   ├── main.cpp                    CLI フロントエンド (piece-emu) / CLI front-end
+│   ├── system_main.cpp             SDL3 フロントエンド (piece-emu-system) / SDL3 front-end
 │   ├── CMakeLists.txt
-│   ├── vcpkg.json                  依存ライブラリ（GTest, CLI11）/ Dependencies
+│   ├── vcpkg.json                  依存ライブラリ（GTest, CLI11, SDL3）/ Dependencies
 │   └── tests/
 │       ├── unit/                   C++ ユニットテスト（GTest）158 テスト
 │       │   ├── test_cpu_instructions.cpp
@@ -198,8 +207,18 @@ cmake -S src -B build-src -G Ninja \
 ninja -C build-src
 ```
 
+SDL3 フロントエンドも同時にビルドするには `vcpkg.json` の features に `system` を指定します：
+
+```sh
+cmake -S src -B build-src -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE=~/vcpkg/scripts/buildsystems/vcpkg.cmake \
+  -DVCPKG_MANIFEST_FEATURES=system
+ninja -C build-src
+```
+
 ビルド成果物 / Build artifacts:
-- `build-src/piece-emu` — CLI フロントエンド（ベアメタルモード）/ CLI front-end (bare-metal mode)
+- `build-src/piece-emu` — ヘッドレス CLI（ベアメタル + PFI）/ Headless CLI (bare-metal + PFI)
+- `build-src/piece-emu-system` — SDL3 フルシステムフロントエンド（SDL3 必須）/ SDL3 full-system frontend
 - `build-src/libpiece_core.a` — CPU コア・BCU・逆アセンブラ / CPU core, BCU, disassembler
 - `build-src/libpiece_soc.a` — S1C33209 オンチップ周辺デバイス / On-chip peripherals
 - `build-src/libpiece_debug.a` — ELF ローダ・セミホスティング・GDB RSP / ELF loader, semihosting, GDB RSP
@@ -212,16 +231,29 @@ ninja -C build-src
 # ベアメタル ELF を実行（終了コード 0=PASS）
 ./build-src/piece-emu test.elf
 
-# PFI フラッシュイメージからフルシステムブート
-./build-src/piece-emu --pfi piece.pfi
+# PFI フラッシュイメージからフルシステムブート（ヘッドレス）
+./build-src/piece-emu --pfi images/old/piece.pfi
 
-# 逆アセンブルトレース付きで実行
-./build-src/piece-emu --trace test.elf
+# SDL3 フルシステムフロントエンド（LCD 表示・ボタン入力）
+./build-src/piece-emu-system --pfi images/old/piece.pfi
 
-# GDB RSP モード（デフォルトポート 1234）
+# SDL3 フロントエンド + GDB RSP（LLDB MCP 対応、非同期モード）
+./build-src/piece-emu-system --pfi images/old/piece.pfi --gdb-port 1234
+lldb
+(lldb) gdb-remote 1234
+
+# ヘッドレスで GDB RSP（同期モード）
 ./build-src/piece-emu --gdb test.elf &
 lldb
 (lldb) gdb-remote 1234
+
+# デバッグオプション（ヘッドレスモード）
+./build-src/piece-emu --wp-write 0x103EA0:4 --pfi images/old/piece.pfi  # SRAM 書き込みウォッチポイント
+./build-src/piece-emu --wp-read 0xADDR:2 test.elf                        # 読み出しウォッチポイント
+./build-src/piece-emu --break-at 0xC01234 test.elf                       # PC 到達時レジスタダンプ
+
+# 逆アセンブルトレース付きで実行
+./build-src/piece-emu --trace test.elf
 
 # 最大実行サイクル数を指定
 ./build-src/piece-emu --max-cycles 1000000 test.elf

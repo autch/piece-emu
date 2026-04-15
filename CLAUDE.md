@@ -116,20 +116,28 @@ cmake -S src -B build-src -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE=/home/autch/src/vcpkg/scripts/buildsystems/vcpkg.cmake
 ninja -C build-src
 
-./build-src/piece-emu --trace <elf>              # run with disassembly trace
-./build-src/piece-emu --gdb [port] <elf>         # GDB RSP mode (default port 1234)
-./build-src/piece-emu --max-cycles N <elf>       # limit execution
+./build-src/piece-emu --trace <elf>                        # run with disassembly trace
+./build-src/piece-emu --gdb [port] <elf>                   # GDB RSP mode (default port 1234)
+./build-src/piece-emu --max-cycles N <elf>                 # limit execution
+./build-src/piece-emu --wp-write 0xADDR[:SIZE] <elf>       # SRAM write watchpoint
+./build-src/piece-emu --wp-read / --wp-rw <elf>            # read / read-write watchpoint
+./build-src/piece-emu --break-at 0xADDR <elf>              # dump regs when PC == ADDR
 
-ninja -C build-src test                          # run all unit tests (layers 1+2)
+./build-src/piece-emu-system --pfi images/old/piece.pfi    # full-system SDL3 run
+./build-src/piece-emu-system --pfi ... --gdb-port 1234     # with async GDB RSP (LLDB-compatible)
+./build-src/piece-emu-system --pfi ... --gdb-debug         # trace RSP packet traffic
+
+ninja -C build-src test                                    # run all unit tests (layers 1+2)
 ```
 
 Build artifacts (static libraries, layered):
 - `libpiece_core.a` — S1C33000 CPU, BCU, disassembler (`src/core/`)
 - `libpiece_soc.a`  — S1C33209 on-chip peripherals: INTC, ClkCtl, T8/T16, PortCtrl, BcuArea, WDT, RTC (`src/soc/`)
 - `libpiece_debug.a` — ELF loader, semihosting, GDB RSP stub (`src/debug/`)
-- `piece_board` (INTERFACE) — board-level external devices placeholder (`src/board/`); links `piece_soc` transitively
+- `libpiece_board.a` — board external devices: S6B0741 LCD controller (`src/board/`); links `piece_soc` publicly
+- `libpiece_host.a` — SDL3 LCD renderer and event polling (`src/host/`); stub INTERFACE when SDL3 absent
 - `piece-emu` — headless CLI frontend (POSIX only, no SDL)
-- `piece-emu-system` — full-system frontend (future; SDL3, CMakeLists.txt にコメントアウトで記載)
+- `piece-emu-system` — SDL3 full-system frontend (built when SDL3 found via vcpkg)
 
 Semihosting ports: 0x060000=CONSOLE_CHAR, 0x060002=CONSOLE_STR, 0x060008=TEST_RESULT (0=PASS).
 Loading 0x060008 requires **2 EXT instructions** (bit 18 set → 19-bit sign-extend is negative).
@@ -154,6 +162,31 @@ Pattern: `crt0.s` sets SP via `ext 0x80` / `ld.w %r0, 0` / `ld.w %sp, %r0`, then
 - `docs/`: Japanese allowed (reference documents).
 - Do not modify any files under `piece-toolchain-llvm/`, `mame/`, `piemu/` — reference material only.
 - Do not modify any files under `sdk/` — shared with other projects, treat as read-only reference. Kernel source is at `sdk/sysdev/pcekn/`.
+
+## IO Handler Byte-Write Semantics (Critical for Peripheral Implementation)
+
+The bus calls 16-bit IO write handlers with the **original address** (possibly odd for byte stores).
+Handlers must check `addr & 1` to distinguish byte writes to high (odd) vs low (even) bytes:
+
+```cpp
+[](uint32_t addr, uint16_t v) {
+    if (addr & 1)
+        reg_hi = static_cast<uint8_t>(v);        // byte store to odd address → high byte only
+    else {
+        reg_lo = static_cast<uint8_t>(v);        // halfword or byte store to even address
+        reg_hi = static_cast<uint8_t>(v >> 8);
+    }
+}
+```
+
+The kernel sets individual port-data bits with byte stores (e.g. `P21D |= 0x02` → `bp[0x2D9] |= 0x02`).
+Ignoring `addr & 1` silently corrupts the adjacent byte of every register pair.
+
+## GDB RSP Modes
+
+- `piece-emu --gdb [port] <elf>` — **sync mode**: RSP server blocks and steps CPU directly in one thread
+- `piece-emu-system --gdb-port N --pfi ...` — **async mode**: RSP server in background thread; CPU stepped by SDL main loop via `GdbRsp::take_async_run_cmd()` / `notify_async_stopped()`; SDL window stays live during continue runs
+- Both GDB and LLDB (MCP) clients work with either mode
 
 ## S1C33000 CPU Critical Facts
 
