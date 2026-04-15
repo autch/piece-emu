@@ -102,6 +102,7 @@ public:
     void remove_watchpoint(uint32_t addr, uint32_t size, WpType type);
     void clear_watchpoints();
     void set_wp_callback(WpCallback cb) { wp_cb_ = std::move(cb); }
+    bool has_watchpoints() const { return !watchpoints_.empty(); }
 
     // ---- Shadow SRAM --------------------------------------------------------
     // Returns the PC of the last instruction that wrote to the given SRAM
@@ -135,8 +136,9 @@ public:
     uint16_t fetch16(uint32_t addr);
 
     // Raw pointer into internal RAM (for ELF load / debug)
-    uint8_t* iram_ptr() { return iram_.data(); }
-    uint8_t* sram_ptr() { return sram_.data(); }
+    uint8_t*       iram_ptr()       { return iram_.data(); }
+    uint8_t*       sram_ptr()       { return sram_.data(); }
+    const uint8_t* sram_ptr() const { return sram_.data(); }
 
 private:
     std::vector<uint8_t> iram_;

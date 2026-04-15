@@ -10,6 +10,7 @@
 #include <netinet/in.h>
 #include <stdexcept>
 #include <string>
+#include <pthread.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -97,7 +98,10 @@ std::string GdbRsp::run(bool single) {
 
 void GdbRsp::serve_async() {
     async_mode_ = true;
-    async_thread_ = std::thread([this]() { serve(); });
+    async_thread_ = std::thread([this]() {
+        pthread_setname_np(pthread_self(), "piece-gdb");
+        serve();
+    });
     async_thread_.detach();
 }
 

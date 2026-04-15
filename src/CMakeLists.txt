@@ -7,6 +7,23 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_compile_options(-Wall -Wextra -Wpedantic)
 
+# Keep frame pointers in RelWithDebInfo so that profilers (perf, Instruments)
+# can unwind call stacks through hot emulation loops without DWARF unwinding.
+add_compile_options($<$<CONFIG:RelWithDebInfo>:-fno-omit-frame-pointer>)
+
+# Enable LTO for Release/RelWithDebInfo builds if the toolchain supports it.
+# This allows bus.fetch16(), cpu.step(), and instruction handlers to be inlined
+# across translation-unit boundaries, dramatically improving emulation speed.
+include(CheckIPOSupported)
+check_ipo_supported(RESULT _ipo_ok OUTPUT _ipo_msg)
+if(_ipo_ok)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
+    message(STATUS "LTO enabled for Release/RelWithDebInfo builds")
+else()
+    message(STATUS "LTO not available: ${_ipo_msg}")
+endif()
+
 # ---------------------------------------------------------------------------
 # Dependencies via vcpkg (toolchain injected by -DCMAKE_TOOLCHAIN_FILE=...)
 # ---------------------------------------------------------------------------

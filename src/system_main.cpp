@@ -36,6 +36,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <pthread.h>
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -311,6 +312,8 @@ struct CpuRunner {
 
     void run()
     {
+        pthread_setname_np(pthread_self(), "piece-cpu");
+
         periph.portctrl.set_k5(0xFF);
         periph.portctrl.set_k6(0xFF);
 
@@ -446,32 +449,62 @@ struct CpuRunner {
 
             // =================================================================
             // Normal mode: run CPU; pace at RENDER_INTERVAL boundary.
+            //
+            // Fast path: when trace/break_addrs/max_cycles/watchpoints are all
+            // disabled, run a tight inner loop with only 3 conditions per
+            // instruction (in_halt, fault, counter) instead of 7+.  The loop
+            // is bounded by the nearest upcoming event (timer/event-poll/render)
+            // so that post-loop handlers fire on time without per-step checks.
             // =================================================================
+            const bool fast_path = !cfg.trace && break_addrs.empty()
+                                   && !cfg.max_cycles
+                                   && !bus.has_watchpoints();
+
             while (!cpu.state.in_halt && !cpu.state.fault && !quit
                    && total_cycles < next_render) {
-                if (cfg.trace) {
-                    std::string dis = cpu.disasm(cpu.state.pc);
-                    std::fprintf(stderr, "  %s\n", dis.c_str());
+                // Run to the nearest boundary in one burst.
+                uint64_t stop = std::min({next_timer_wake,
+                                          next_event_poll,
+                                          next_render});
+                if (fast_path) {
+                    while (!cpu.state.in_halt && !cpu.state.fault
+                           && total_cycles < stop) {
+                        cpu.step();
+                        ++total_cycles;
+                    }
+                } else {
+                    while (!cpu.state.in_halt && !cpu.state.fault
+                           && total_cycles < stop) {
+                        if (cfg.trace) {
+                            std::string dis = cpu.disasm(cpu.state.pc);
+                            std::fprintf(stderr, "  %s\n", dis.c_str());
+                        }
+                        bus.debug_pc = cpu.state.pc;
+                        if (!break_addrs.empty()
+                                && break_addrs.count(cpu.state.pc)) {
+                            std::fprintf(stderr,
+                                "[BREAK] PC=0x%06X\n", cpu.state.pc);
+                            print_reg_snapshot(cpu.state);
+                        }
+                        cpu.step();
+                        ++total_cycles;
+                        if (cfg.max_cycles
+                                && total_cycles >= cfg.max_cycles) {
+                            std::fprintf(stderr,
+                                "Reached max-cycles limit (%llu)\n",
+                                (unsigned long long)total_cycles);
+                            quit = true;
+                            break;
+                        }
+                    }
                 }
-                bus.debug_pc = cpu.state.pc;
-                if (!break_addrs.empty() && break_addrs.count(cpu.state.pc)) {
-                    std::fprintf(stderr, "[BREAK] PC=0x%06X\n", cpu.state.pc);
-                    print_reg_snapshot(cpu.state);
-                }
-                total_cycles += cpu.step();
-                if (total_cycles >= next_timer_wake)
-                    do_tick();
 
+                if (cpu.state.fault || quit) break;
+
+                if (total_cycles >= next_timer_wake) do_tick();
                 if (total_cycles >= next_event_poll) {
                     poll_buttons();
                     next_event_poll = total_cycles + EVENT_INTERVAL;
-                }
-
-                if (cfg.max_cycles && total_cycles >= cfg.max_cycles) {
-                    std::fprintf(stderr, "Reached max-cycles limit (%llu)\n",
-                        (unsigned long long)total_cycles);
-                    quit = true;
-                    break;
                 }
             }
 
@@ -517,6 +550,8 @@ struct CpuRunner {
 // ---------------------------------------------------------------------------
 int main(int argc, char** argv)
 {
+    pthread_setname_np(pthread_self(), "piece-sdl");
+
     Config cfg = Config::parse(argc, argv);
 
     try {

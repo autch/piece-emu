@@ -144,25 +144,94 @@ void Cpu::h_mac(Cpu& cpu, uint16_t insn) {
     // Reconstruct signed 64-bit accumulator from {AHR, ALR}
     uint64_t uacc = (uint64_t(cpu.state.ahr) << 32) | cpu.state.alr;
 
-    for (uint32_t k = count; k > 0; k--) {
-        int16_t h1 = static_cast<int16_t>(cpu.bus().read16(cpu.state.r[r1_n]));
-        int16_t h2 = static_cast<int16_t>(cpu.bus().read16(cpu.state.r[r2_n]));
-        int64_t prod = int64_t(h1) * int64_t(h2);
+    Bus& bus = cpu.bus();
 
-        uint64_t uprod = static_cast<uint64_t>(prod);
-        uint64_t usum  = uacc + uprod;
+    uint32_t p1  = cpu.state.r[r1_n] & 0x0FFF'FFFFu;
+    uint32_t p2  = cpu.state.r[r2_n] & 0x0FFF'FFFFu;
 
-        // MO is sticky: once set it stays set until software clears it
-        if (!cpu.state.psr.mo()) {
-            // Signed 64-bit overflow: same-sign inputs, different-sign output
-            bool ov = (~(uacc ^ uprod) & (uacc ^ usum)) >> 63;
-            if (ov) cpu.state.psr.set_mo(true);
+    // Fast path A: open-bus (reads return 0xFFFF = int16_t(-1)).
+    // Triggered by pdwait(): both pointers set to 0x1000000 (beyond Flash end),
+    // so every read returns 0xFFFF unconditionally.
+    // Product per iteration = (-1)*(-1) = +1.  Result: acc + count, O(1).
+    // No bus cycles are charged (consistent with Region::NONE behaviour in read16).
+    {
+        uint32_t flash_end = Bus::FLASH_BASE + static_cast<uint32_t>(bus.flash_size());
+        // Check that both start and end addresses of each array are above Flash_end.
+        uint32_t p1_end = p1 + (count - 1) * 2u;
+        uint32_t p2_end = p2 + (count - 1) * 2u;
+        if (p1 >= flash_end && p1_end >= flash_end &&
+            p2 >= flash_end && p2_end >= flash_end &&
+            !bus.has_watchpoints()) {
+            // All reads return 0xFFFF.  Accumulate analytically.
+            uint64_t delta = static_cast<uint64_t>(count); // count * (+1)
+            uint64_t usum  = uacc + delta;
+            if (!cpu.state.psr.mo()) {
+                bool ov = ((~(uacc ^ delta)) & (uacc ^ usum)) >> 63;
+                if (ov) cpu.state.psr.set_mo(true);
+            }
+            cpu.state.alr = static_cast<uint32_t>(usum);
+            cpu.state.ahr = static_cast<uint32_t>(usum >> 32);
+            cpu.state.r[r1_n] += count * 2u;
+            cpu.state.r[r2_n] += count * 2u;
+            cpu.state.r[rs_n] = 0;
+            return;
         }
-        uacc = usum;
+    }
 
-        cpu.state.r[r1_n] += 2;
-        cpu.state.r[r2_n] += 2;
-        cpu.state.r[rs_n]--;
+    // Fast path B: both operand arrays lie entirely within SRAM and no watchpoints.
+    // Bypass read16() / classify() and access the SRAM backing store directly.
+    uint32_t off1 = p1 - Bus::SRAM_BASE;
+    uint32_t off2 = p2 - Bus::SRAM_BASE;
+    // end offsets (exclusive): off + count*2 must not overflow sram_.
+    uint32_t end1 = off1 + count * 2u;
+    uint32_t end2 = off2 + count * 2u;
+    if (end1 <= bus.sram_size() && end2 <= bus.sram_size()
+            && !bus.has_watchpoints()) {
+        const uint8_t* sram = bus.sram_ptr();
+        for (uint32_t k = count; k > 0; k--) {
+            // Little-endian 16-bit load from raw SRAM bytes.
+            int16_t h1 = static_cast<int16_t>(
+                uint16_t(sram[off1]) | (uint16_t(sram[off1 + 1]) << 8));
+            int16_t h2 = static_cast<int16_t>(
+                uint16_t(sram[off2]) | (uint16_t(sram[off2 + 1]) << 8));
+            int64_t prod = int64_t(h1) * int64_t(h2);
+
+            uint64_t uprod = static_cast<uint64_t>(prod);
+            uint64_t usum  = uacc + uprod;
+
+            if (!cpu.state.psr.mo()) {
+                bool ov = (~(uacc ^ uprod) & (uacc ^ usum)) >> 63;
+                if (ov) cpu.state.psr.set_mo(true);
+            }
+            uacc = usum;
+            off1 += 2;
+            off2 += 2;
+        }
+        // Commit pointer registers and cycle cost.
+        bus.cycles += static_cast<uint32_t>((bus.sram_wait + 1) * 2 * count);
+        cpu.state.r[r1_n] = Bus::SRAM_BASE + off1;
+        cpu.state.r[r2_n] = Bus::SRAM_BASE + off2;
+        cpu.state.r[rs_n] = 0;
+    } else {
+        // Slow path: out-of-SRAM operands or active watchpoints.
+        for (uint32_t k = count; k > 0; k--) {
+            int16_t h1 = static_cast<int16_t>(bus.read16(cpu.state.r[r1_n]));
+            int16_t h2 = static_cast<int16_t>(bus.read16(cpu.state.r[r2_n]));
+            int64_t prod = int64_t(h1) * int64_t(h2);
+
+            uint64_t uprod = static_cast<uint64_t>(prod);
+            uint64_t usum  = uacc + uprod;
+
+            if (!cpu.state.psr.mo()) {
+                bool ov = (~(uacc ^ uprod) & (uacc ^ usum)) >> 63;
+                if (ov) cpu.state.psr.set_mo(true);
+            }
+            uacc = usum;
+
+            cpu.state.r[r1_n] += 2;
+            cpu.state.r[r2_n] += 2;
+            cpu.state.r[rs_n]--;
+        }
     }
 
     cpu.state.alr = static_cast<uint32_t>(uacc);

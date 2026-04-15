@@ -63,15 +63,18 @@ void Bus::register_io(uint32_t addr, IoHandler handler) {
 
 Bus::Region Bus::classify(uint32_t addr) const {
     addr &= 0x0FFF'FFFF; // 28-bit
-    if (addr < IRAM_SIZE) return Region::IRAM;
-    if (addr >= 0x002000 && addr < 0x003000) return Region::IRAM; // mirror
-    // Area 1 (peripherals) and semihosting above it share Region::IO;
-    // caller normalizes to canonical address before indexing io_handlers_.
-    if (addr >= AREA1_BASE && addr < SEMIHOST_BASE + SEMIHOST_SIZE) return Region::IO;
+    // SRAM first: most data reads/writes on P/ECE target SRAM (0x100000–0x1FFFFF).
     // SRAM window is the full BCU-decoded range; accesses beyond sram_.size()
     // behave as open-bus (required for kernel SRAM size detection).
     if (addr >= SRAM_BASE && addr < SRAM_BASE + SRAM_WINDOW) return Region::SRAM;
+    // Flash second: ROM data reads (0xC00000+).
     if (addr >= FLASH_BASE && addr < FLASH_BASE + flash_.size()) return Region::FLASH;
+    // Area 1 (peripherals) and semihosting share Region::IO.
+    // Caller normalizes to canonical address before indexing io_handlers_.
+    if (addr >= AREA1_BASE && addr < SEMIHOST_BASE + SEMIHOST_SIZE) return Region::IO;
+    // IRAM last: rarely accessed outside startup/kernel.
+    if (addr < IRAM_SIZE) return Region::IRAM;
+    if (addr >= 0x002000 && addr < 0x003000) return Region::IRAM; // mirror
     return Region::NONE;
 }
 
@@ -85,8 +88,11 @@ uint8_t Bus::read8(uint32_t addr) {
     case Region::SRAM:
         cycles += sram_wait + 1;
         if (addr - SRAM_BASE >= sram_.size()) return 0xFF; // open-bus beyond installed SRAM
-        fire_wp(addr, sram_[addr - SRAM_BASE], 1, false);
-        return sram_[addr - SRAM_BASE];
+        {
+            uint8_t v = sram_[addr - SRAM_BASE];
+            if (!watchpoints_.empty()) fire_wp(addr, v, 1, false);
+            return v;
+        }
     case Region::FLASH:
         cycles += flash_wait + 1;
         return flash_[addr - FLASH_BASE];
@@ -113,15 +119,40 @@ uint16_t Bus::read16(uint32_t addr) {
         fault_pending_ = true;
         addr &= ~1u;
     }
+    // Fast path 1: SRAM — single unsigned subtraction covers [SRAM_BASE, SRAM_BASE+SRAM_WINDOW).
+    // Accounts for >95% of data reads on P/ECE; avoids the classify() call entirely.
+    {
+        uint32_t off = addr - SRAM_BASE;
+        if (off < SRAM_WINDOW) [[likely]] {
+            cycles += sram_wait + 1;
+            if (off >= sram_.size()) return 0xFFFF; // open-bus beyond installed SRAM
+            uint16_t v = le16(&sram_[off]);
+            if (!watchpoints_.empty()) fire_wp(addr, v, 2, false);
+            return v;
+        }
+    }
+    // Fast path 2: Flash and addresses above Flash.
+    // The P/ECE kernel uses addresses like 0x1000000 (above Flash_end) as open-bus
+    // for busy-wait loops (pdwait).  Detecting this here avoids classify() entirely.
+    if (addr >= FLASH_BASE) {
+        if (addr < FLASH_BASE + flash_.size()) {
+            cycles += flash_wait + 1;
+            return le16(&flash_[addr - FLASH_BASE]);
+        }
+        return 0xFFFF; // beyond Flash end → open-bus (e.g. 0x1000000 in pdwait)
+    }
     switch (classify(addr)) {
     case Region::IRAM:
         return le16(&iram_[addr & (IRAM_SIZE - 1)]);
     case Region::SRAM:
+        // Already handled by fast path 1 above; unreachable in practice.
         cycles += sram_wait + 1;
-        if (addr - SRAM_BASE >= sram_.size()) return 0xFFFF; // open-bus
-        fire_wp(addr, le16(&sram_[addr - SRAM_BASE]), 2, false);
-        return le16(&sram_[addr - SRAM_BASE]);
+        if (addr - SRAM_BASE >= sram_.size()) return 0xFFFF;
+        { uint16_t v = le16(&sram_[addr - SRAM_BASE]);
+          if (!watchpoints_.empty()) fire_wp(addr, v, 2, false);
+          return v; }
     case Region::FLASH:
+        // Already handled by fast path 2 above; unreachable in practice.
         cycles += flash_wait + 1;
         return le16(&flash_[addr - FLASH_BASE]);
     case Region::IO: {
@@ -149,8 +180,11 @@ uint32_t Bus::read32(uint32_t addr) {
     case Region::SRAM:
         cycles += (sram_wait + 1) * 2;
         if (addr - SRAM_BASE >= sram_.size()) return 0xFFFF'FFFF; // open-bus
-        fire_wp(addr, le32(&sram_[addr - SRAM_BASE]), 4, false);
-        return le32(&sram_[addr - SRAM_BASE]);
+        {
+            uint32_t v = le32(&sram_[addr - SRAM_BASE]);
+            if (!watchpoints_.empty()) fire_wp(addr, v, 4, false);
+            return v;
+        }
     case Region::FLASH:
         cycles += (flash_wait + 1) * 2;
         return le32(&flash_[addr - FLASH_BASE]);
@@ -266,15 +300,15 @@ void Bus::write32(uint32_t addr, uint32_t val) {
 uint16_t Bus::fetch16(uint32_t addr) {
     addr &= 0x0FFF'FFFF;
     addr &= ~1u;
-    // Internal RAM
+    // Flash first: P/ECE code runs almost entirely from Flash (0xC00000+).
+    if (addr >= FLASH_BASE && addr < FLASH_BASE + flash_.size())
+        return le16(&flash_[addr - FLASH_BASE]);
+    // Internal RAM (startup trampolines, kernel, interrupt vectors)
     if (addr < IRAM_SIZE)
         return le16(&iram_[addr]);
     if (addr >= 0x002000 && addr < 0x003000)
         return le16(&iram_[addr & (IRAM_SIZE - 1)]);
-    // Flash
-    if (addr >= FLASH_BASE && addr < FLASH_BASE + flash_.size())
-        return le16(&flash_[addr - FLASH_BASE]);
-    // SRAM (code in external RAM)
+    // SRAM (dynamically loaded code)
     if (addr >= SRAM_BASE && addr < SRAM_BASE + SRAM_WINDOW) {
         uint32_t off = addr - SRAM_BASE;
         if (off < sram_.size()) return le16(&sram_[off]);
