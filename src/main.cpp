@@ -153,12 +153,21 @@ int main(int argc, char** argv) {
         // ---------------------------------------------------------------------
 
         // Declared early so semihosting lambdas can capture by reference.
-        uint64_t total_cycles = 0;
+        uint64_t total_cycles   = 0;
+        // Set by TEST_RESULT when no debugger is attached: unconditional
+        // emulator termination.  Bypasses the HLT→peripheral-wake path so
+        // pending timers/RTC events cannot silently resume execution.
+        bool     stop_requested = false;
 
         semihosting_init(bus, {
             .get_cycles       = [&]() -> uint64_t { return total_cycles; },
             .set_trace        = [&](bool on) { trace = on; },
-            .halt             = [&]() { cpu.state.in_halt = true; },
+            .halt             = [&]() {
+                cpu.state.in_halt = true;
+                // When a debugger is attached we only halt (so the user can
+                // inspect state and resume); otherwise request termination.
+                if (!use_gdb) stop_requested = true;
+            },
             .snapshot_regs    = [&]() { print_reg_snapshot(cpu.state); },
             .set_breakpoint   = [&](uint32_t addr) { cpu.breakpoints.insert(addr); },
             .clear_breakpoint = [&](uint32_t addr) { cpu.breakpoints.erase(addr); },
@@ -235,8 +244,9 @@ int main(int argc, char** argv) {
         bool limit_hit = false;
 
         for (;;) {
+            if (stop_requested) break;
             // Inner loop: normal CPU execution until HLT/SLEEP or fault.
-            while (!cpu.state.in_halt && !cpu.state.fault) {
+            while (!cpu.state.in_halt && !cpu.state.fault && !stop_requested) {
                 if (trace) {
                     std::string dis = cpu.disasm(cpu.state.pc);
                     std::fprintf(stderr, "  %s\n", dis.c_str());
@@ -256,7 +266,7 @@ int main(int argc, char** argv) {
                 }
             }
 
-            if (limit_hit || cpu.state.fault) break;
+            if (limit_hit || cpu.state.fault || stop_requested) break;
 
             // HLT/SLEEP: fast-forward to the earliest pending peripheral event.
             uint64_t wake = UINT64_MAX;
