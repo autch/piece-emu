@@ -208,45 +208,80 @@ void Cpu::h_mirror(Cpu& cpu, uint16_t insn) {
 // Handlers — Class 4D: division steps
 // ============================================================================
 
+// Zero-divide trap vector (base + 16, trap number = 4).  Level is ignored by
+// do_trap() for traps < 16 (it bypasses the IE/IL gating).
+static constexpr int kTrapZeroDiv = 4;
+
 void Cpu::h_div0s(Cpu& cpu, uint16_t insn) {
     cpu.flush_ext();
-    // AHR = sign extension of ALR (all-1s if negative, all-0s if positive)
+    uint32_t divisor = cpu.state.r[Insn{insn}.rs()];
+    if (divisor == 0) {
+        cpu.assert_trap(kTrapZeroDiv, 0);
+        return;
+    }
     bool neg_dividend = (cpu.state.alr >> 31) & 1;
     cpu.state.ahr = neg_dividend ? 0xFFFFFFFFu : 0u;
-    // DS = sign of dividend (ALR), N = sign of divisor (rs)
     cpu.state.psr.set_ds(neg_dividend);
-    cpu.state.psr.set_n((cpu.state.r[Insn{insn}.rs()] >> 31) & 1);
-    // C is unchanged
+    cpu.state.psr.set_n((divisor >> 31) & 1);
 }
 void Cpu::h_div0u(Cpu& cpu, uint16_t insn) {
     cpu.flush_ext();
+    uint32_t divisor = cpu.state.r[Insn{insn}.rs()];
+    if (divisor == 0) {
+        cpu.assert_trap(kTrapZeroDiv, 0);
+        return;
+    }
     cpu.state.ahr = 0;
     cpu.state.psr.set_ds(false);
     cpu.state.psr.set_n(false);
-    // C is unchanged
-    (void)Insn{insn}.rs();
 }
 void Cpu::h_div1(Cpu& cpu, uint16_t insn) {
     cpu.flush_ext();
     uint32_t divisor = cpu.state.r[Insn{insn}.rs()];
-    bool c = cpu.state.psr.c();
-    uint64_t rem = (uint64_t(cpu.state.ahr) << 32) | cpu.state.alr;
-    rem = (rem << 1) | (c ? 1 : 0);
-    uint32_t hi = uint32_t(rem >> 32);
-    bool sub_ok = hi >= divisor;
-    if (sub_ok) hi -= divisor;
-    cpu.state.ahr = hi;
-    cpu.state.alr = (uint32_t(rem) & ~1u) | (sub_ok ? 1 : 0);
-    cpu.state.psr.set_c(sub_ok);
+    // {AHR, ALR} <<= 1 as a 64-bit value (MSB of ALR shifts into LSB of AHR).
+    cpu.state.ahr = (cpu.state.ahr << 1) | (cpu.state.alr >> 31);
+    cpu.state.alr <<= 1;
+    uint32_t ahr = cpu.state.ahr;
+    uint32_t tmp;
+    bool q_bit;
+    bool ds = cpu.state.psr.ds();
+    bool n  = cpu.state.psr.n();
+    if (!ds) {
+        if (!n) {                   // +dividend / +divisor
+            tmp = ahr - divisor;
+            q_bit = (tmp <= ahr);   // no borrow (unsigned compare)
+        } else {                    // +dividend / -divisor
+            tmp = ahr + divisor;
+            q_bit = (tmp < ahr);    // carry out (unsigned compare)
+        }
+    } else {
+        if (!n) {                   // -dividend / +divisor
+            tmp = ahr + divisor;
+            q_bit = (tmp >= ahr);   // no carry (unsigned compare)
+        } else {                    // -dividend / -divisor
+            tmp = ahr - divisor;
+            q_bit = (tmp > ahr);    // borrow (unsigned compare)
+        }
+    }
+    if (q_bit) {
+        cpu.state.ahr = tmp;
+        cpu.state.alr |= 1u;
+    }
 }
 void Cpu::h_div2s(Cpu& cpu, uint16_t insn) {
     cpu.flush_ext();
+    if (!cpu.state.psr.ds()) return;    // only applies when dividend was negative
     uint32_t divisor = cpu.state.r[Insn{insn}.rs()];
-    if (!cpu.state.psr.c())
-        cpu.state.ahr += divisor;
+    uint32_t tmp = cpu.state.psr.n() ? (cpu.state.ahr - divisor)
+                                     : (cpu.state.ahr + divisor);
+    if (tmp == 0) {
+        cpu.state.ahr = 0;
+        cpu.state.alr += 1;
+    }
 }
 void Cpu::h_div3s(Cpu& cpu, uint16_t) {
     cpu.flush_ext();
-    if (static_cast<int32_t>(cpu.state.ahr) < 0)
-        cpu.state.alr--;
+    // If dividend and divisor had opposite signs, negate the quotient.
+    if (cpu.state.psr.ds() != cpu.state.psr.n())
+        cpu.state.alr = 0u - cpu.state.alr;
 }
