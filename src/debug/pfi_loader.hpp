@@ -18,6 +18,11 @@ struct PfiInfo {
     std::size_t flash_size; // bytes loaded into bus flash
 };
 
+// Read just the PFI header and return SYSTEMINFO.
+// Does not load any flash data.  Use this to determine memory sizes before
+// constructing a Bus.  Throws std::runtime_error on failure.
+SYSTEMINFO pfi_read_sysinfo(const std::string& path);
+
 // Load a PFI flash image into bus flash memory.
 // Validates the header signature and SYSTEMINFO.size field.
 // Throws std::runtime_error on failure.

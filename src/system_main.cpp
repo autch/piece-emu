@@ -188,8 +188,10 @@ struct Config {
     std::string              pfi_path;
     bool                     trace      = false;
     uint64_t                 max_cycles = 0;
-    std::size_t              sram_size  = 0x040000; // 256 KB
-    std::size_t              flash_size = 0x080000; // 512 KB
+    std::size_t              sram_size  = 0x040000; // 256 KB (default; overridden from PFI)
+    std::size_t              flash_size = 0x080000; // 512 KB (default; overridden from PFI)
+    bool                     sram_size_explicit  = false;
+    bool                     flash_size_explicit = false;
     int                      scale      = 4;
     uint16_t                 gdb_port   = 0;
     bool                     gdb_debug  = false;
@@ -212,8 +214,10 @@ struct Config {
         app.add_option("--scale", cfg.scale,
             "Display scale factor (default: 4 → 512×352)")
             ->check(CLI::Range(1, 8));
-        app.add_option("--sram-size",  cfg.sram_size,  "SRAM size in bytes");
-        app.add_option("--flash-size", cfg.flash_size, "Flash size in bytes");
+        auto* opt_sram  = app.add_option("--sram-size",  cfg.sram_size,
+            "SRAM size in bytes (default: from PFI SYSTEMINFO)");
+        auto* opt_flash = app.add_option("--flash-size", cfg.flash_size,
+            "Flash size in bytes (default: from PFI SYSTEMINFO)");
         app.add_option("--gdb-port", cfg.gdb_port,
             "Start GDB RSP server on this TCP port (e.g. 1234); 0 = disabled");
         app.add_flag("--gdb-debug", cfg.gdb_debug,
@@ -229,6 +233,9 @@ struct Config {
 
         try { app.parse(argc, argv); }
         catch (const CLI::ParseError& e) { std::exit(app.exit(e)); }
+
+        cfg.sram_size_explicit  = opt_sram->count()  > 0;
+        cfg.flash_size_explicit = opt_flash->count() > 0;
         return cfg;
     }
 };
@@ -568,6 +575,23 @@ int main(int argc, char** argv)
     Config cfg = Config::parse(argc, argv);
 
     try {
+        // Read PFI header first to determine hardware memory sizes.
+        // Override defaults unless the user explicitly passed --sram-size /
+        // --flash-size on the command line.
+        {
+            SYSTEMINFO si = pfi_read_sysinfo(cfg.pfi_path);
+            if (!cfg.sram_size_explicit && si.sram_end > si.sram_top) {
+                cfg.sram_size = si.sram_end - si.sram_top;
+                std::fprintf(stderr, "PFI SYSTEMINFO: sram_size=0x%X bytes\n",
+                             static_cast<unsigned>(cfg.sram_size));
+            }
+            if (!cfg.flash_size_explicit && si.pffs_end > Bus::FLASH_BASE) {
+                cfg.flash_size = si.pffs_end - Bus::FLASH_BASE;
+                std::fprintf(stderr, "PFI SYSTEMINFO: flash_size=0x%X bytes\n",
+                             static_cast<unsigned>(cfg.flash_size));
+            }
+        }
+
         Bus bus(cfg.sram_size, cfg.flash_size);
         Cpu cpu(bus);
 

@@ -9,48 +9,73 @@
 // SYSTEMINFO.size must equal sizeof(SYSTEMINFO) == 32.
 static constexpr uint16_t SYSINFO_EXPECTED_SIZE = 32;
 
-PfiInfo pfi_load(Bus& bus, const std::string& path)
+// ---- shared header reader ---------------------------------------------------
+
+// Opens path, reads and validates the PFIHEADER, closes (or leaves open) the
+// file.  On success fills *hdr_out; on failure throws std::runtime_error.
+// If fp_out is non-null the file is left open and the handle returned via
+// *fp_out; otherwise the file is closed before returning.
+static void read_pfi_header(const std::string& path,
+                             PFIHEADER* hdr_out,
+                             std::FILE** fp_out = nullptr)
 {
-    // ---- open file ----
     std::FILE* fp = std::fopen(path.c_str(), "rb");
     if (!fp)
-        throw std::runtime_error(std::format("pfi_load: cannot open '{}'", path));
+        throw std::runtime_error(std::format("pfi: cannot open '{}'", path));
 
-    // ---- read header ----
-    // PFIHEADER is 40 bytes, no padding (see pfi_format.h).
-    // Both host and P/ECE target are little-endian, so a direct fread is safe.
     PFIHEADER hdr{};
     if (std::fread(&hdr, sizeof(PFIHEADER), 1, fp) != 1) {
         std::fclose(fp);
-        throw std::runtime_error(std::format("pfi_load: '{}' too short to read header", path));
+        throw std::runtime_error(
+            std::format("pfi: '{}' too short to read header", path));
     }
 
-    // ---- validate signature ----
-    // On-disk bytes: '1','I','F','P' → read as LE uint32 = 0x50464931.
-    //   bits 31-24: 'P'=0x50, bits 23-16: 'F'=0x46, bits 15-8: 'I'=0x49
-    //   bits  7- 0: version byte ('1'=0x31)  ← masked out with 0xffffff00
+    // Signature check: on-disk bytes '1','I','F','P' → LE uint32 = 0x50464931.
+    // Ignore the version byte (bits 7-0) with the 0xffffff00 mask.
     if ((hdr.signature & 0xffffff00u) !=
         ((uint32_t)'P' << 24 | (uint32_t)'F' << 16 | (uint32_t)'I' << 8)) {
         std::fclose(fp);
         throw std::runtime_error(std::format(
-            "pfi_load: '{}' invalid PFI signature (got 0x{:08X})", path, hdr.signature));
+            "pfi: '{}' invalid PFI signature (got 0x{:08X})", path, hdr.signature));
     }
 
-    // ---- validate offset ----
     if (hdr.offset < sizeof(PFIHEADER)) {
         std::fclose(fp);
         throw std::runtime_error(std::format(
-            "pfi_load: '{}' offset_to_flash ({}) < sizeof(PFIHEADER) ({})",
+            "pfi: '{}' offset_to_flash ({}) < sizeof(PFIHEADER) ({})",
             path, hdr.offset, sizeof(PFIHEADER)));
     }
 
-    // ---- validate SYSTEMINFO ----
     if (hdr.sysinfo.size != SYSINFO_EXPECTED_SIZE) {
         std::fclose(fp);
         throw std::runtime_error(std::format(
-            "pfi_load: '{}' SYSTEMINFO.size mismatch (expected {}, got {})",
+            "pfi: '{}' SYSTEMINFO.size mismatch (expected {}, got {})",
             path, SYSINFO_EXPECTED_SIZE, hdr.sysinfo.size));
     }
+
+    *hdr_out = hdr;
+    if (fp_out)
+        *fp_out = fp;
+    else
+        std::fclose(fp);
+}
+
+// ---- pfi_read_sysinfo -------------------------------------------------------
+
+SYSTEMINFO pfi_read_sysinfo(const std::string& path)
+{
+    PFIHEADER hdr{};
+    read_pfi_header(path, &hdr);
+    return hdr.sysinfo;
+}
+
+// ---- pfi_load ---------------------------------------------------------------
+
+PfiInfo pfi_load(Bus& bus, const std::string& path)
+{
+    PFIHEADER  hdr{};
+    std::FILE* fp = nullptr;
+    read_pfi_header(path, &hdr, &fp);
 
     // ---- determine flash image size ----
     // pffs_end is FLASH_TOP + flash_size.  Round up to next power-of-two.
