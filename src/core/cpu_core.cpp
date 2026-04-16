@@ -114,7 +114,8 @@ void Cpu::do_trap(int no, int level) {
     state.psr.set_ie(false);
     if (no >= 16)
         state.psr.set_il(static_cast<uint32_t>(level));
-    state.in_halt = false;
+    state.in_halt   = false;
+    state.halt_mode = CpuState::HaltMode::None;
 }
 
 // ============================================================================

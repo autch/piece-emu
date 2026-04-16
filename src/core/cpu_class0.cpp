@@ -24,12 +24,14 @@ void Cpu::h_nop(Cpu& cpu, uint16_t) { cpu.flush_ext(); }
 
 void Cpu::h_slp(Cpu& cpu, uint16_t) {
     cpu.flush_ext();
-    cpu.state.in_halt = true;
+    cpu.state.in_halt   = true;
+    cpu.state.halt_mode = CpuState::HaltMode::Slp;
 }
 
 void Cpu::h_halt(Cpu& cpu, uint16_t) {
     cpu.flush_ext();
-    cpu.state.in_halt = true;
+    cpu.state.in_halt   = true;
+    cpu.state.halt_mode = CpuState::HaltMode::Hlt;
 }
 
 void Cpu::h_pushn(Cpu& cpu, uint16_t insn) {

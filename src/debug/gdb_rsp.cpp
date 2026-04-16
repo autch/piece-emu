@@ -70,7 +70,8 @@ std::string GdbRsp::run(bool single) {
     }
 
     // --- Synchronous (headless) mode -----------------------------------------
-    cpu_.state.in_halt = false;
+    cpu_.state.in_halt   = false;
+    cpu_.state.halt_mode = CpuState::HaltMode::None;
     wp_hit_ = false;
 
     auto step_one = [&]() {
@@ -113,7 +114,8 @@ bool GdbRsp::take_async_run_cmd(bool* single_out) {
     int cmd = async_run_cmd_.exchange(0);
     if (cmd == 0) return false;
     *single_out = (cmd == 1);
-    cpu_.state.in_halt = false;
+    cpu_.state.in_halt   = false;
+    cpu_.state.halt_mode = CpuState::HaltMode::None;
     wp_hit_ = false;
     return true;
 }

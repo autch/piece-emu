@@ -87,6 +87,13 @@ struct CpuState {
     // Halt state (slp/halt): set to true by SLP/HALT, cleared by trap
     bool in_halt = false;
 
+    // Distinguishes SLEEP (slp) from HALT (halt) while in_halt is set.
+    // SLEEP stops OSC3 on real hardware, so only OSC1-driven wake sources
+    // (RTC, key input) can resume execution.  HALT leaves all clocks running.
+    // Cleared together with in_halt on trap entry.
+    enum class HaltMode : uint8_t { None = 0, Hlt = 1, Slp = 2 };
+    HaltMode halt_mode = HaltMode::None;
+
     // Emulator fault: set when an undefined/reserved instruction is executed.
     // Distinct from in_halt so callers can detect abnormal termination.
     bool fault = false;

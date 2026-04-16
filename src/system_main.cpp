@@ -298,6 +298,15 @@ struct PiecePeripherals {
         wake = std::min(wake, wdt.next_wake_cycle());
         return wake;
     }
+
+    // SLEEP mode: OSC3 is stopped on real hardware, so only OSC1-driven wake
+    // sources are valid.  In P/ECE this is RTC (1 Hz) and external input
+    // (KEY0 via button press) — the latter is handled by poll_buttons() in
+    // the CPU loop, so here we only report the RTC wake time.
+    uint64_t sleep_wake_cycle()
+    {
+        return rtc.next_wake_cycle();
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -448,7 +457,11 @@ struct CpuRunner {
                         }
 
                         if (cpu.state.in_halt && !cpu.state.fault) {
-                            uint64_t wake = periph.next_wake_cycle();
+                            bool sleep = (cpu.state.halt_mode
+                                          == CpuState::HaltMode::Slp);
+                            uint64_t wake = sleep
+                                ? periph.sleep_wake_cycle()
+                                : periph.next_wake_cycle();
                             if (wake != UINT64_MAX) {
                                 total_cycles = wake;
                                 do_tick();
@@ -531,14 +544,25 @@ struct CpuRunner {
             if (cpu.state.fault || quit) break;
 
             if (cpu.state.in_halt) {
-                uint64_t wake = periph.next_wake_cycle();
-                if (wake == UINT64_MAX) {
+                // HLT leaves all clocks running → any peripheral can wake.
+                // SLP stops OSC3 → only RTC (OSC1) and KEY input can wake.
+                // KEY input arrives via poll_buttons(), which we guarantee
+                // to run at least every EVENT_INTERVAL cycles by clamping
+                // the jump target with next_event_poll.
+                bool sleep = (cpu.state.halt_mode
+                              == CpuState::HaltMode::Slp);
+                uint64_t wake = sleep ? periph.sleep_wake_cycle()
+                                      : periph.next_wake_cycle();
+                if (wake == UINT64_MAX && !sleep) {
                     std::fprintf(stderr,
                         "Deadlock: CPU halted with no wakeup after %llu cycles\n",
                         (unsigned long long)total_cycles);
                     break;
                 }
-                uint64_t target = std::min(wake, next_render);
+                // In SLEEP, wake may be UINT64_MAX when RTC is idle — then
+                // only a button press can wake.  Clamp to next_event_poll.
+                uint64_t target = std::min({wake, next_render,
+                                            next_event_poll});
                 uint64_t delta  = target - total_cycles;
                 if (delta > periph.clk.cpu_clock_hz()) {
                     std::fprintf(stderr,
@@ -552,6 +576,10 @@ struct CpuRunner {
                 }
                 total_cycles = target;
                 do_tick(); // time jump: process all timer events up to new time
+                if (total_cycles >= next_event_poll) {
+                    poll_buttons();
+                    next_event_poll = total_cycles + EVENT_INTERVAL;
+                }
             }
 
             if (total_cycles >= next_render) {
