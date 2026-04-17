@@ -1,0 +1,6 @@
+# Generated test sources (emitted by gen_*.py on each `make`).
+test_gen_*.c
+
+# Un-ignore this directory's Makefile (the top-level .gitignore ignores all
+# Makefiles globally, but this one is a hand-maintained driver).
+!Makefile
