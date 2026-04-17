@@ -152,9 +152,28 @@ Memory map (emulator):
 
 Bare-metal C tests (uses LLVM S1C33 toolchain at `/home/autch/src/llvm-c33`):
 ```bash
-cd src/tests/bare_metal && make && make run
+cd src/tests/bare_metal && make && make run        # hand-written tests
+cd src/tests/bare_metal/gen && make && make run    # generator-based regression suite (1,659 cases)
 ```
 Pattern: `crt0.s` sets SP via `ext 0x80` / `ld.w %r0, 0` / `ld.w %sp, %r0`, then calls C `_start_c`.
+
+### Generator-based regression suite (`src/tests/bare_metal/gen/`)
+
+Python generators emit S1C33 bare-metal C with inline asm and a Python oracle
+for each case. Coverage (1,659 total): ALU (253), memory (129), SP-relative (72),
+shift/rotate+misc (628), mul/div (69), branch+delay slot (236), pushn/popn (34),
+mac (15), bitops (164), special regs (37), `call.d %rb` (6), int/reti (16).
+Each failing case reports its ID via semihosting so regressions are localized
+to a single instruction / operand combo.
+
+**Bugs uncovered by this suite (now fixed — keep as regression anchors):**
+- Signed step-division (`div0s`/`div1`/`div2s`/`div3s`) produced the wrong
+  quotient and remainder. Emulator now follows the S1C33 non-restoring
+  signed-division algorithm (ported from legacy piemu).
+- `int imm2` was dispatching to trap number `imm2`. The spec is trap number
+  `12 + imm2` (SW exception, vectors at base+48..60). Now fixed.
+- LLVM backend regalloc could pick R0 (callee-saved) as return-value staging
+  across `popn`, clobbering the returned value. Fixed in the S1C33 backend.
 
 ## Language Rules
 

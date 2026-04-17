@@ -683,7 +683,30 @@ TEST_F(TestFixture, ExtAddUnsigned) {
 
 #### 第3層: システムテスト（ベアメタルELF実行）
 
-現行のテストスイート（`tests/bare_metal/test_*.c`）。S1C33 機械語で書いたテストプログラムをエミュレータで実行し、セミホスティングポートで PASS/FAIL を報告する。
+手書きテスト（`tests/bare_metal/test_*.c`）と、ジェネレータ方式リグレッション試験（`tests/bare_metal/gen/`）の二段構成。いずれも S1C33 機械語で書いたテストプログラムをエミュレータで実行し、セミホスティングポートで PASS/FAIL を報告する。
+
+**ジェネレータ方式試験（1,659 ケース）** — `tests/bare_metal/gen/gen_*.py` が Python オラクルつきでインラインアセンブリ C テストを生成する。現行の網羅範囲は次の通り:
+
+| カテゴリ | ケース数 | 生成器 |
+|---|---|---|
+| ALU（add/sub/and/or/xor/not/cmp/ld imm）| 253 | `gen_alu.py` |
+| メモリアクセス（Class 0/1 各種オフセット）| 129 | `gen_mem.py` |
+| SP 相対ロード/ストア | 72 | `gen_sp.py` |
+| シフト・ローテートほか | 628 | `gen_shift.py` |
+| 乗除算・ステップ除算 | 69 | `gen_muldiv.py` |
+| 分岐・遅延スロット | 236 | `gen_branch.py` |
+| pushn / popn | 34 | `gen_pushpop.py` |
+| MAC | 15 | `gen_mac.py` |
+| ビット操作（bset/bclr/btst/bnot）| 164 | `gen_bitop.py` |
+| 特殊レジスタ | 37 | `gen_special.py` |
+| `call.d %rb` | 6 | `gen_calldrb.py` |
+| int / reti / trap | 16 | `gen_trap.py` |
+
+このスイートの整備過程で次の 3 件の不具合が発見・修正された（詳細は `git log`）:
+
+- **エミュレータ**: 符号付きステップ除算（`div0s`/`div1`/`div2s`/`div3s`）が誤った商・剰余を生成していた。S1C33 の非復元型符号付き除算アルゴリズムに修正（legacy piemu から移植）。
+- **エミュレータ**: `int imm2` がトラップ番号 `imm2` にディスパッチしていたが、仕様は `12 + imm2`（SW 例外、ベクタは base+48..60）が正しい。
+- **LLVM バックエンド (S1C33)**: レジスタアロケータが `popn` を跨いで R0（callee-saved）を戻り値のステージングに用いて返り値を破壊することがあった。
 
 これはリグレッションテストとして維持する。新機能追加や既存コードのリファクタリング時に、全体の動作が壊れていないことを保証する。
 

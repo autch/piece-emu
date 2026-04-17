@@ -172,7 +172,20 @@ piece-emu/
 │           ├── test_ext_imm.c
 │           ├── test_div.c
 │           ├── test_misc.c
-│           └── crt0.s              スタートアップコード / Startup code
+│           ├── crt0.s              スタートアップコード / Startup code
+│           └── gen/                ジェネレータ方式リグレッション試験（1,659 ケース）
+│               ├── gen_alu.py      ALU 命令（253）/ ALU instructions
+│               ├── gen_mem.py      メモリアクセス（129）/ Memory access
+│               ├── gen_sp.py       SP 相対ロード/ストア（72）/ SP-relative
+│               ├── gen_shift.py    シフト・ローテートほか（628）/ Shift/rotate + misc
+│               ├── gen_muldiv.py   乗除算・ステップ除算（69）/ Mul/div/step-div
+│               ├── gen_branch.py   分岐・遅延スロット（236）/ Branch + delay slot
+│               ├── gen_pushpop.py  pushn/popn（34）
+│               ├── gen_mac.py      MAC 命令（15）/ MAC
+│               ├── gen_bitop.py    ビット操作（164）/ Bit ops
+│               ├── gen_special.py  特殊レジスタ（37）/ Special regs
+│               ├── gen_calldrb.py  call.d %rb（6）
+│               └── gen_trap.py     int/reti・trap（16）
 ├── docs/
 │   ├── s1c33000_quick_reference.md     命令セット・レジスタ・エンコーディング早見表
 │   ├── peripheral-implementation-status.md  周辺デバイス実装状況・レジスタマップ・落とし穴
@@ -423,6 +436,41 @@ cd src/tests/bare_metal && make && make run
 - シフト・ローテート / Shifts and rotates
 - ハードウェア乗算器 (`mlt.w`/`mlt.h`) / Hardware multiplier
 - ステップ除算シーケンス (`div0u`/`div1`×32) / Step-division sequence
+
+### ジェネレータ方式リグレッション試験 / Generator-based Regression Suite
+
+Python ジェネレータが Python オラクルつきのインラインアセンブリ C テストを出力し、
+命令セット全体を網羅する 1,659 ケースのリグレッションスイートを生成します。
+Python generators emit inline-asm C tests with a Python oracle per case,
+producing a 1,659-case regression suite covering the full CPU instruction set.
+
+```sh
+cd src/tests/bare_metal/gen && make && make run
+```
+
+網羅範囲 / Coverage: ALU (253)・memory (129)・SP-relative (72)・shift/rotate+misc (628)・
+mul/div (69)・branch+delay slot (236)・pushn/popn (34)・mac (15)・bitops (164)・
+special regs (37)・`call.d %rb` (6)・int/reti (16)。
+失敗時はセミホスティング経由でケース ID が報告されます。
+Failures report per-case IDs via semihosting.
+
+本スイートの整備過程で、エミュレータおよび LLVM バックエンドで以下 3 件の
+不具合が発見・修正されました（詳細は `git log`）。
+Three bugs in the emulator / LLVM backend were uncovered and fixed during
+development of this suite (see `git log` for details):
+
+- **エミュレータ**: 符号付きステップ除算 (`div0s`/`div1`/`div2s`/`div3s`) が
+  誤った商・剰余を生成していた。S1C33 の非復元型符号付き除算アルゴリズムに
+  修正（legacy piemu から移植）。
+  Emulator: signed step-division produced wrong quotient/remainder;
+  now matches the S1C33 non-restoring signed-division algorithm.
+- **エミュレータ**: `int imm2` 命令がトラップ番号 `imm2` へディスパッチしていたが、
+  仕様は `12 + imm2`（SW 例外、ベクタは base+48..60）が正しい。修正済み。
+  Emulator: `int imm2` was mapped to trap number `imm2` instead of `12 + imm2`.
+- **LLVM バックエンド (S1C33)**: レジスタアロケータが `popn` を跨いで R0
+  （callee-saved）を戻り値のステージングに用い、返り値を破壊するケースがあった。修正済み。
+  LLVM backend: regalloc could stage the return value in R0 (callee-saved)
+  across `popn`, clobbering it.
 
 ---
 
