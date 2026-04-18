@@ -69,7 +69,8 @@ void Cpu::h_retd(Cpu& cpu, uint16_t) {
 void Cpu::h_int(Cpu& cpu, uint16_t insn) {
     cpu.flush_ext();
     int vec = Insn{insn}.imm2();
-    cpu.do_trap(vec, 0);
+    // SW exceptions 0..3 live at trap numbers 12..15 (quick_reference.md §trap table).
+    cpu.do_trap(12 + vec, 0);
 }
 
 void Cpu::h_reti(Cpu& cpu, uint16_t) {

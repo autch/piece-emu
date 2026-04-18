@@ -12,9 +12,11 @@
 if(SDL3_FOUND)
     add_library(piece_host STATIC
         lcd_renderer.cpp
+        audio_output.cpp
     )
     target_include_directories(piece_host PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(piece_host PUBLIC piece_board SDL3::SDL3)
+    # piece_soc is required publicly: audio_output.hpp references Sound.
+    target_link_libraries(piece_host PUBLIC piece_board piece_soc SDL3::SDL3)
 else()
     # Stub target so other targets can always link against piece_host.
     add_library(piece_host INTERFACE)

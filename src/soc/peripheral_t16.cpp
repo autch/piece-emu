@@ -150,11 +150,9 @@ void Timer16bit::tick(uint64_t cpu_cycles)
         } else {
             // One or more CRA fires. Raise CRA once (sticky ISR).
             if (crb_possible) {
-                // CRB fires if reachable in first period, any middle period,
-                // or the final partial period.
-                bool crb_fires = (tc_ < crb_)    // first period: tc_..cra_-1 passes crb_
-                              || (N >= 2)          // middle full period always passes crb_
-                              || (final_tc >= crb_); // final period: 0..final_tc passes crb_
+                bool crb_fires = (tc_ < crb_)
+                              || (N >= 2)
+                              || (final_tc >= crb_);
                 if (crb_fires) raise_crb();
             }
             raise_cra();

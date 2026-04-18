@@ -62,10 +62,25 @@ public:
 
     // Called by peripheral devices when an interrupt event occurs.
     // Sets the ISR flag, checks IEN and priority, delivers if accepted.
-    void raise(IrqSource src);
+    // If level_override >= 0, the trap is delivered at that level instead of
+    // the priority register value (used by the sound subsystem to work
+    // around a kernel re-entry bug — see peripheral_sound.cpp).
+    void raise(IrqSource src, int level_override = -1);
 
     // Direct read access to raw register bytes (for unit tests).
     uint8_t reg(int offset) const { return regs_[offset]; }
+
+    // Re-check every ISR flag and try to deliver the highest-priority
+    // source whose IL would be accepted by the CPU right now.  Call this
+    // once per CPU tick so interrupts pended during a high-IL phase get
+    // delivered as soon as IL drops.  Without this, an IRQ raised while
+    // PSR.IL >= priority would be silently dropped by do_trap's IL check.
+    void poll();
+
+    // Notify INTC that the CPU's current PSR.IL is `il`.  Used by poll()
+    // to decide which sources can be delivered right now without invoking
+    // CPU state directly.
+    void set_current_il(uint32_t il) { current_il_ = il; }
 
 private:
     static constexpr uint32_t BASE_ADDR = 0x040260;
@@ -73,6 +88,14 @@ private:
 
     uint8_t regs_[REG_COUNT] = {};
     std::function<void(int, int)> assert_trap_;
+
+    // Per-source level overrides, -1 = "use priority register".  Set by
+    // raise(src, level_override) and cleared when the ISR flag is cleared
+    // by the kernel (or by poll after successful delivery of a non-override).
+    int8_t level_override_[static_cast<int>(IrqSource::NUM_SOURCES)];
+
+    // Last-known PSR.IL from the CPU (updated before each poll()).
+    uint32_t current_il_ = 0;
 
     // Per-source descriptor
     struct SrcInfo {
@@ -86,7 +109,7 @@ private:
     };
     static const SrcInfo src_table_[static_cast<int>(IrqSource::NUM_SOURCES)];
 
-    void try_deliver(IrqSource src);
+    void try_deliver(IrqSource src, int level_override = -1);
 
     // I/O handlers
     uint16_t io_read(uint32_t off);

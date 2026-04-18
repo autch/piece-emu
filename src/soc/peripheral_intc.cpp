@@ -96,6 +96,7 @@ void InterruptController::attach(Bus& bus,
                                   std::function<void(int, int)> assert_trap)
 {
     assert_trap_ = std::move(assert_trap);
+    for (auto& v : level_override_) v = -1;
 
     // Register I/O handlers for 0x040260..0x04029F (32 halfwords = 64 bytes)
     for (uint32_t off = 0; off < REG_COUNT; off += 2) {
@@ -136,10 +137,23 @@ void InterruptController::io_write(uint32_t off, uint32_t addr, uint16_t val)
     auto write_byte = [&](int byte_off, uint8_t byte_val) {
         if (byte_off >= 32 && byte_off <= 39) {
             // ISR register: selective clear
+            uint8_t before = regs_[byte_off];
             if (rstonly) {
                 regs_[byte_off] &= byte_val;
             } else {
                 regs_[byte_off] = byte_val;
+            }
+            // Clear per-source level overrides for any bits that transitioned
+            // from 1 → 0 (i.e. were just acknowledged by the kernel).
+            uint8_t cleared = before & ~regs_[byte_off];
+            if (cleared) {
+                for (int i = 0; i < static_cast<int>(IrqSource::NUM_SOURCES); i++) {
+                    const SrcInfo& info = src_table_[i];
+                    if (info.isr_byte == byte_off
+                            && (cleared & (1 << info.isr_bit))) {
+                        level_override_[i] = -1;
+                    }
+                }
             }
         } else {
             regs_[byte_off] = byte_val;
@@ -157,12 +171,51 @@ void InterruptController::io_write(uint32_t off, uint32_t addr, uint16_t val)
     }
 }
 
-void InterruptController::raise(IrqSource src)
+void InterruptController::raise(IrqSource src, int level_override)
 {
-    try_deliver(src);
+    int idx = static_cast<int>(src);
+    if (level_override >= 0) {
+        level_override_[idx] = static_cast<int8_t>(level_override & 0x07);
+    }
+    try_deliver(src, level_override);
 }
 
-void InterruptController::try_deliver(IrqSource src)
+void InterruptController::poll()
+{
+    // Scan ISR registers for set bits.  For each, check IEN; if enabled
+    // and priority > current_il_, deliver.  Higher priority wins when
+    // multiple sources are pending.
+    int best = -1;
+    int best_level = 0;
+    int best_override = -1;
+    for (int i = 0; i < static_cast<int>(IrqSource::NUM_SOURCES); i++) {
+        const SrcInfo& info = src_table_[i];
+        if (!(regs_[info.isr_byte] & (1 << info.isr_bit))) continue;
+        if (!(regs_[info.ien_byte] & (1 << info.ien_bit))) continue;
+        int level;
+        int8_t ov = level_override_[i];
+        if (ov >= 0) {
+            level = ov;
+        } else {
+            level = (regs_[info.pri_byte] >> info.pri_shift) & 0x07;
+        }
+        if (level == 0) continue;
+        if (static_cast<uint32_t>(level) <= current_il_) continue;
+        if (level > best_level) {
+            best = i;
+            best_level = level;
+            best_override = ov;
+        }
+    }
+    if (best < 0) return;
+    if (best_override < 0 && level_override_[best] >= 0) {
+        // preserve override for possible future polls if delivery is rejected
+        // (e.g. CPU in delay-slot).  do_trap will defer in that case.
+    }
+    assert_trap_(src_table_[best].trap_no, best_level);
+}
+
+void InterruptController::try_deliver(IrqSource src, int level_override)
 {
     int idx = static_cast<int>(src);
     const SrcInfo& info = src_table_[idx];
@@ -173,8 +226,13 @@ void InterruptController::try_deliver(IrqSource src)
     // Check interrupt enable
     if (!(regs_[info.ien_byte] & (1 << info.ien_bit))) return;
 
-    // Get 3-bit priority level from the priority register
-    int level = (regs_[info.pri_byte] >> info.pri_shift) & 0x07;
+    int level;
+    if (level_override >= 0) {
+        level = level_override & 0x07;
+    } else {
+        // Get 3-bit priority level from the priority register
+        level = (regs_[info.pri_byte] >> info.pri_shift) & 0x07;
+    }
     if (level == 0) return; // priority 0 = disabled
 
     // Deliver to CPU (CPU will check IE and IL internally)

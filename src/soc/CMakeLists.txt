@@ -9,6 +9,7 @@ add_library(piece_soc STATIC
     peripheral_rtc.cpp
     peripheral_hsdma.cpp
     peripheral_sif3.cpp
+    peripheral_sound.cpp
 )
 
 target_include_directories(piece_soc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

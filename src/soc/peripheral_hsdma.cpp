@@ -169,3 +169,13 @@ void Hsdma::attach(Bus& bus)
     for (int ch = 0; ch < 4; ch++)
         register_channel(bus, ch);
 }
+
+void Hsdma::finish_ch1()
+{
+    ch1_en        = false;
+    chan_[1].en  &= ~HS_EN_BIT;
+    // Zero out the counter to match the real hardware (transfer complete).
+    ch1_cnt       = 0;
+    chan_[1].cnt  = 0;
+    if (on_ch1_complete) on_ch1_complete();
+}

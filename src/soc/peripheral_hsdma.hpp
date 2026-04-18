@@ -58,6 +58,15 @@ public:
     // Set by the display frontend to trigger LCD rendering.
     std::function<void()> on_ch0_complete;
 
+    // Callback invoked when Ch1 transfer counter reaches zero.  Called by the
+    // sound subsystem from finish_ch1() after EN has been cleared.
+    std::function<void()> on_ch1_complete;
+
+    // Clear Ch1 EN (real hardware auto-clears on transfer completion).  Called
+    // by the sound subsystem when the scheduled completion cycle is reached.
+    // Also invokes on_ch1_complete if set.
+    void finish_ch1();
+
 private:
     // Raw register storage for Ch0..3 (used for correct R/W passthrough)
     // Each channel: cnt32, sadr32, dadr32, en16, tf16

@@ -28,8 +28,10 @@
 #include "peripheral_rtc.hpp"
 #include "peripheral_hsdma.hpp"
 #include "peripheral_sif3.hpp"
+#include "peripheral_sound.hpp"
 #include "s6b0741.hpp"
 #include "lcd_renderer.hpp"
+#include "audio_output.hpp"
 
 #include <CLI/CLI.hpp>
 #include <SDL3/SDL.h>
@@ -195,6 +197,8 @@ struct Config {
     int                      scale      = 4;
     uint16_t                 gdb_port   = 0;
     bool                     gdb_debug  = false;
+    bool                     no_audio   = false;
+    bool                     audio_trace = false;
     std::vector<std::string> wp_write_specs, wp_read_specs, wp_rw_specs;
     std::vector<std::string> break_specs;
 
@@ -222,6 +226,10 @@ struct Config {
             "Start GDB RSP server on this TCP port (e.g. 1234); 0 = disabled");
         app.add_flag("--gdb-debug", cfg.gdb_debug,
             "Print GDB RSP packet traffic to stderr");
+        app.add_flag("--no-audio", cfg.no_audio,
+            "Disable SDL3 audio output (default: enabled)");
+        app.add_flag("--audio-trace", cfg.audio_trace,
+            "Print sound subsystem trace events to stderr");
         app.add_option("--wp-write", cfg.wp_write_specs,
             "Write watchpoint: ADDR or ADDR:SIZE (hex, repeatable)");
         app.add_option("--wp-read",  cfg.wp_read_specs,
@@ -257,6 +265,7 @@ struct PiecePeripherals {
     Hsdma               hsdma;
     Sif3                sif3;
     S6b0741             lcd;
+    Sound               sound;
 
     uint64_t            nmi_count = 0;
 
@@ -287,6 +296,7 @@ struct PiecePeripherals {
         for (int i = 0; i < 6; i++) t16_ch[i].tick(cycles);
         wdt.tick(cycles);
         rtc.tick(cycles);
+        sound.tick(cycles);
     }
 
     uint64_t next_wake_cycle()
@@ -296,6 +306,7 @@ struct PiecePeripherals {
         for (int i = 0; i < 6; i++) wake = std::min(wake, t16_ch[i].next_wake_cycle());
         wake = std::min(wake, rtc.next_wake_cycle());
         wake = std::min(wake, wdt.next_wake_cycle());
+        wake = std::min(wake, sound.next_wake_cycle());
         return wake;
     }
 
@@ -370,8 +381,14 @@ struct CpuRunner {
         update_timer_wake();
 
         // Tick all peripherals and refresh the wake point.
+        // Also re-poll INTC so interrupts pended while PSR.IL was high get
+        // delivered as soon as IL drops.  Without this, raise() would only
+        // try once and drop the IRQ if IL was temporarily high (e.g. during
+        // the sound ISR's SET_SIL5 phase).
         auto do_tick = [&]() {
             periph.tick(total_cycles);
+            periph.intc.set_current_il(cpu.state.psr.il());
+            periph.intc.poll();
             update_timer_wake();
         };
 
@@ -563,17 +580,6 @@ struct CpuRunner {
                 // only a button press can wake.  Clamp to next_event_poll.
                 uint64_t target = std::min({wake, next_render,
                                             next_event_poll});
-                uint64_t delta  = target - total_cycles;
-                if (delta > periph.clk.cpu_clock_hz()) {
-                    std::fprintf(stderr,
-                        "[HALT-JUMP] delta=%llu wake=%llu wdt=%llu"
-                        " t16[0]=%llu t16[1]=%llu\n",
-                        (unsigned long long)delta,
-                        (unsigned long long)wake,
-                        (unsigned long long)periph.wdt.next_wake_cycle(),
-                        (unsigned long long)periph.t16_ch[0].next_wake_cycle(),
-                        (unsigned long long)periph.t16_ch[1].next_wake_cycle());
-                }
                 total_cycles = target;
                 do_tick(); // time jump: process all timer events up to new time
                 if (total_cycles >= next_event_poll) {
@@ -643,6 +649,14 @@ int main(int argc, char** argv)
         PiecePeripherals periph;
         periph.attach(bus, cpu);
 
+        // Sound: wire HSDMA Ch1 → PWM sample ring buffer.  Completion is
+        // throttled by SDL audio consumption (see peripheral_sound.cpp), so
+        // no cycle provider is needed.
+        periph.sound.attach(bus, periph.hsdma, periph.intc, periph.clk,
+                            [&total_cycles]() { return total_cycles; },
+                            &periph.t16_ch[1]);
+        periph.sound.set_trace(cfg.audio_trace);
+
         // Snapshot LCD pixels to shared buffer on each HSDMA Ch0 completion.
         uint64_t    hsdma_frame_no = 0;
         LcdFrameBuf frame_buf;
@@ -673,6 +687,15 @@ int main(int argc, char** argv)
         if (!renderer.init(cfg.scale)) {
             std::fprintf(stderr, "Failed to initialise SDL3 renderer\n");
             return 1;
+        }
+
+        // SDL3 audio (optional).  Callback pulls samples from periph.sound
+        // on the SDL audio thread; the SPSC ring buffer is lock-free.
+        AudioOutput audio;
+        if (!cfg.no_audio) {
+            audio.set_trace(cfg.audio_trace);
+            if (!audio.open(periph.sound))
+                std::fprintf(stderr, "Audio disabled (open failed)\n");
         }
 
         // GDB RSP server (async, background thread)
@@ -716,6 +739,7 @@ int main(int argc, char** argv)
         }
 
         cpu_thread.join();
+        audio.close();
         renderer.destroy();
 
         if (cpu.state.fault)
