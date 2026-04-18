@@ -81,7 +81,11 @@ private:
     Bus& bus_;
     Cpu& cpu_;
     uint16_t port_;
-    int listen_fd_ = -1;
+    // Stored as intptr_t so that either a POSIX int fd or a Windows SOCKET
+    // (UINT_PTR; may exceed int range) fits without truncation. INVALID_SOCKET
+    // on Windows is all-bits-set, which round-trips through intptr_t as -1,
+    // so the `< 0` sentinel check works on both platforms.
+    intptr_t listen_fd_ = -1;
     bool no_ack_mode_ = false;
     bool debug_       = false;
     std::unordered_set<uint32_t> breakpoints_;
@@ -92,7 +96,9 @@ private:
     uint32_t wp_hit_addr_  = 0;     // physical address that triggered it
     int      wp_hit_ztype_ = 2;     // Z-packet type: 2=write, 3=read, 4=rw
 
-    void handle_packet(int fd, const std::string& packet);
+    // fd is an intptr_t for the same portability reason as listen_fd_ —
+    // callers cast to/from the platform socket type in gdb_rsp.cpp.
+    void handle_packet(intptr_t fd, const std::string& packet);
 
     // Run the CPU: single=true → one instruction, false → until halt/fault/breakpoint.
     // Returns the RSP stop reply string (e.g. "T05thread:1;").

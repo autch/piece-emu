@@ -1,5 +1,5 @@
 /** @file pieceif_libusb.c
- * P/ECE USB interface — Linux/libusb port.
+ * P/ECE USB interface — libusb-1.0 port (Linux / macOS / Windows).
  *
  * Original pieceif.dll by MIO.H (OeRSTED), Copyright (C)2001 AQUAPLUS Co.,Ltd.
  * libusb rewrite by autch.
@@ -10,7 +10,9 @@
  *     A single libusb context is shared across all device slots; the caller
  *     is expected to be a single-process, single-threaded CLI tool.
  *   - No Windows types (DWORD, LONG, HANDLE).  Replaced with stdint.h types.
- *   - SleepEx(n, TRUE) → usleep(n * 1000); GetTickCount() → clock_gettime().
+ *
+ * On Windows the device needs a WinUSB-compatible driver (install via Zadig
+ * or libusbK) so libusb can claim the interface.
  *
  * Implemented functions:
  *   Transport  : ismInit, ismExit, ismInitEx, ismExitEx, ismSelect,
@@ -24,8 +26,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <unistd.h>
-#include <time.h>
+
+#if defined(_WIN32)
+#  define WIN32_LEAN_AND_MEAN
+#  include <windows.h>
+#else
+#  include <unistd.h>
+#  include <time.h>
+#endif
 
 #include <libusb.h>
 
@@ -36,14 +44,25 @@
 // ---------------------------------------------------------------------------
 
 // Sleep for n milliseconds.
-#define ismWait(n) usleep((unsigned int)(n) * 1000u)
+#if defined(_WIN32)
+#  define ismWait(n) Sleep((DWORD)(n))
+#else
+#  define ismWait(n) usleep((unsigned int)(n) * 1000u)
+#endif
 
 // Monotonic millisecond clock (wraps at ~49 days, sufficient for timeouts).
 static uint32_t get_tick_ms(void)
 {
+#if defined(_WIN32)
+    return (uint32_t)GetTickCount64();
+#elif defined(__APPLE__) && !defined(CLOCK_MONOTONIC)
+    // Pre-10.12 macOS fallback (modern SDKs provide clock_gettime).
+    return (uint32_t)(clock() * 1000u / CLOCKS_PER_SEC);
+#else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint32_t)((uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u);
+#endif
 }
 
 // ---------------------------------------------------------------------------

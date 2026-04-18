@@ -5,7 +5,13 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-add_compile_options(-Wall -Wextra -Wpedantic)
+# if gcc or clang, enable all warnings and pedantic mode
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(-Wall -Wextra -Wpedantic)
+# msvc
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+    add_compile_options(/W4 /permissive- /utf-8)
+endif()
 
 # Keep frame pointers in RelWithDebInfo so that profilers (perf, Instruments)
 # can unwind call stacks through hot emulation loops without DWARF unwinding.
@@ -97,7 +103,7 @@ if(GTest_FOUND)
     )
 
     include(GoogleTest)
-    gtest_discover_tests(piece_unit_tests)
+    gtest_add_tests(TARGET piece_unit_tests)
 else()
     message(WARNING "Google Test not found — skipping unit tests (piece_unit_tests). "
                     "Run cmake with -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake")

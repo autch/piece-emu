@@ -36,10 +36,15 @@
 
 #include <CLI/CLI.hpp>
 #include <SDL3/SDL.h>
+#ifdef WIN32
+#include <SDL3/SDL_main.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
+#if defined(__unix__) || (defined(__APPLE__) && defined(__MACH__))
 #include <pthread.h>
+#endif
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -345,10 +350,12 @@ struct CpuRunner {
 
     void run()
     {
+#if defined(__unix__)
 #ifdef __APPLE__
         pthread_setname_np("piece-cpu");
 #else
         pthread_setname_np(pthread_self(), "piece-cpu");
+#endif
 #endif
         periph.portctrl.set_k5(0xFF);
         periph.portctrl.set_k6(0xFF);
@@ -675,10 +682,12 @@ struct CpuRunner {
 // ---------------------------------------------------------------------------
 int main(int argc, char** argv)
 {
+#if defined(__unix__)
 #ifdef __APPLE__
     pthread_setname_np("piece-sdl");
 #else
     pthread_setname_np(pthread_self(), "piece-sdl");
+#endif
 #endif
 
     Config cfg = Config::parse(argc, argv);

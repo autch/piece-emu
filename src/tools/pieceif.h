@@ -1,10 +1,10 @@
 #ifndef PIECEIF_H
 #define PIECEIF_H
 
-// P/ECE USB interface (pieceif) — Linux/libusb port.
+// P/ECE USB interface (pieceif) — libusb-1.0 port (Linux / macOS / Windows).
 // Original: Copyright (C)2001 AQUAPLUS Co., Ltd. / OeRSTED, Inc.
-// libusb port: Copyright (C) autch.  Linux port strips the Windows
-// DLL/mutex infrastructure; the USB protocol itself is unchanged.
+// libusb port: Copyright (C) autch.  Strips the Windows DLL/mutex
+// infrastructure; the USB protocol itself is unchanged.
 
 #ifdef __cplusplus
 extern "C" {

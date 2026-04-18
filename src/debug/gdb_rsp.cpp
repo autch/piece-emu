@@ -3,16 +3,63 @@
 #include "bus.hpp"
 #include "cpu.hpp"
 
-#include <arpa/inet.h>
 #include <cassert>
 #include <cstring>
 #include <format>
-#include <netinet/in.h>
 #include <stdexcept>
 #include <string>
-#include <pthread.h>
-#include <sys/socket.h>
-#include <unistd.h>
+
+// ---------------------------------------------------------------------------
+// Cross-platform socket shims (Winsock2 on Windows, BSD sockets on POSIX).
+//
+// The rest of this translation unit uses socket_t / kInvalidSock / close_sock()
+// so the platform divergence is confined to the block below.
+// ---------------------------------------------------------------------------
+#ifdef _WIN32
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <winsock2.h>
+#  include <ws2tcpip.h>
+#  include <windows.h>
+#  pragma comment(lib, "ws2_32.lib")
+using socket_t = SOCKET;
+using ssize_t  = int;
+static constexpr socket_t kInvalidSock = INVALID_SOCKET;
+static inline int close_sock(socket_t s) { return ::closesocket(s); }
+
+// Cast helper for send/recv buffer length: Winsock takes int, POSIX takes size_t.
+static inline int sock_len(std::size_t n) { return static_cast<int>(n); }
+
+// Winsock requires per-process WSAStartup before any socket call, and a
+// matching WSACleanup at shutdown. A function-local static handles both with
+// guaranteed single initialisation and atexit-ordered teardown.
+namespace {
+struct WsaInit {
+    WsaInit() {
+        WSADATA wsa{};
+        if (::WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+            throw std::runtime_error("GdbRsp: WSAStartup failed");
+    }
+    ~WsaInit() { ::WSACleanup(); }
+};
+inline void ensure_winsock() { static WsaInit init; }
+} // namespace
+#else
+#  include <arpa/inet.h>
+#  include <netinet/in.h>
+#  include <pthread.h>
+#  include <sys/socket.h>
+#  include <unistd.h>
+using socket_t = int;
+static constexpr socket_t kInvalidSock = -1;
+static inline int close_sock(socket_t s) { return ::close(s); }
+static inline std::size_t sock_len(std::size_t n) { return n; }
+static inline void ensure_winsock() {}
+#endif
 
 // ============================================================================
 // GDB Remote Serial Protocol (RSP)
@@ -27,22 +74,29 @@
 GdbRsp::GdbRsp(Bus& bus, Cpu& cpu, uint16_t port, bool debug)
     : bus_(bus), cpu_(cpu), port_(port), debug_(debug)
 {
-    listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (listen_fd_ < 0)
+    ensure_winsock();
+    socket_t s = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (s == kInvalidSock)
         throw std::runtime_error("GdbRsp: socket failed");
     int opt = 1;
-    ::setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    // Winsock's setsockopt takes const char*; POSIX accepts any pointer
+    // through const void*. The char* cast is safe on both platforms.
+    ::setsockopt(s, SOL_SOCKET, SO_REUSEADDR,
+                 reinterpret_cast<const char*>(&opt), sizeof(opt));
     sockaddr_in addr{};
     addr.sin_family      = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port        = htons(port_);
-    if (::bind(listen_fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0)
+    if (::bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+        close_sock(s);
         throw std::runtime_error(std::format("GdbRsp: bind failed on port {}", port_));
-    ::listen(listen_fd_, 1);
+    }
+    ::listen(s, 1);
+    listen_fd_ = static_cast<intptr_t>(s);
 }
 
 GdbRsp::~GdbRsp() {
-    if (listen_fd_ >= 0) ::close(listen_fd_);
+    if (listen_fd_ != -1) close_sock(static_cast<socket_t>(listen_fd_));
 }
 
 // ---------------------------------------------------------------------------
@@ -100,9 +154,13 @@ std::string GdbRsp::run(bool single) {
 void GdbRsp::serve_async() {
     async_mode_ = true;
     async_thread_ = std::thread([this]() {
-#ifdef __APPLE__
+#if defined(_WIN32)
+        // SetThreadDescription is Win10 1607+. Older Windows silently no-ops
+        // via the loader stub; a missing export just leaves the thread unnamed.
+        ::SetThreadDescription(::GetCurrentThread(), L"piece-gdb");
+#elif defined(__APPLE__)
         pthread_setname_np("piece-gdb");
-#else
+#elif defined(__linux__)
         pthread_setname_np(pthread_self(), "piece-gdb");
 #endif
         serve();
@@ -163,11 +221,12 @@ std::string GdbRsp::make_async_stop_reply() const {
 // Packet handler
 // ---------------------------------------------------------------------------
 
-void GdbRsp::handle_packet(int fd, const std::string& pkt) {
+void GdbRsp::handle_packet(intptr_t fd, const std::string& pkt) {
+    socket_t sock = static_cast<socket_t>(fd);
     auto send_rsp = [&](const std::string& data) {
         std::string msg = rsp_packet(data);
         if (debug_) std::fprintf(stderr, "GDB RSP: >> %s\n", data.c_str());
-        ::send(fd, msg.c_str(), msg.size(), 0);
+        ::send(sock, msg.c_str(), sock_len(msg.size()), 0);
     };
 
     if (pkt.empty()) { send_rsp(""); return; }
@@ -431,8 +490,8 @@ void GdbRsp::handle_packet(int fd, const std::string& pkt) {
 
 void GdbRsp::serve() {
     std::fprintf(stderr, "GDB RSP: waiting for connection on port %u...\n", port_);
-    int client = ::accept(listen_fd_, nullptr, nullptr);
-    if (client < 0) return;
+    socket_t client = ::accept(static_cast<socket_t>(listen_fd_), nullptr, nullptr);
+    if (client == kInvalidSock) return;
     std::fprintf(stderr, "GDB RSP: client connected\n");
     if (async_mode_) async_client_active_.store(true);
     no_ack_mode_ = false;
@@ -460,7 +519,7 @@ void GdbRsp::serve() {
     std::string buf;
     char tmp[256];
     while (true) {
-        ssize_t n = ::recv(client, tmp, sizeof(tmp) - 1, 0);
+        ssize_t n = ::recv(client, tmp, sock_len(sizeof(tmp) - 1), 0);
         if (n <= 0) break;
         tmp[n] = '\0';
         buf += tmp;
@@ -474,7 +533,7 @@ void GdbRsp::serve() {
                 cpu_.state.in_halt = true;
                 buf.erase(0, 1);
                 std::string stop = rsp_packet("T02thread:1;");
-                ::send(client, stop.c_str(), stop.size(), 0);
+                ::send(client, stop.c_str(), sock_len(stop.size()), 0);
                 continue;
             }
             if (buf[0] == '$') {
@@ -484,14 +543,14 @@ void GdbRsp::serve() {
                 if (!no_ack_mode_)
                     ::send(client, "+", 1, 0);
                 if (debug_) std::fprintf(stderr, "GDB RSP: << %s\n", pkt_data.c_str());
-                handle_packet(client, pkt_data);
+                handle_packet(static_cast<intptr_t>(client), pkt_data);
                 buf.erase(0, hash + 3);
                 continue;
             }
             buf.erase(0, 1); // discard unknown
         }
     }
-    ::close(client);
+    close_sock(client);
     if (async_mode_) {
         async_client_active_.store(false);
         // If the RSP thread is blocked in run() waiting for a stop notification,

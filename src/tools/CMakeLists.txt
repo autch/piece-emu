@@ -19,19 +19,27 @@ target_link_libraries(pfar PRIVATE piece_pfi)
 
 # ---------------------------------------------------------------------------
 # Real-hardware tools (require libusb-1.0)
+#   Linux / macOS : pkg-config (distro package or Homebrew's libusb)
+#   Windows       : vcpkg port "libusb" (find_path/find_library via toolchain)
 # ---------------------------------------------------------------------------
-# Windows: use vcpkg's libusb port (unofficial-libusb, target unofficial::libusb::libusb).
-# Linux/macOS: fall back to the system libusb-1.0 via pkg-config.
-if(WIN32)
-    find_package(unofficial-libusb CONFIG QUIET)
-    if(unofficial-libusb_FOUND)
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(LIBUSB QUIET libusb-1.0)
+endif()
+
+if(NOT LIBUSB_FOUND)
+    # Fallback when pkg-config is unavailable (typically Windows / vcpkg).
+    find_path(LIBUSB_INCLUDE_DIR
+        NAMES libusb.h
+        PATH_SUFFIXES libusb-1.0)
+    find_library(LIBUSB_LIBRARY
+        NAMES usb-1.0 libusb-1.0 libusb)
+    if(LIBUSB_INCLUDE_DIR AND LIBUSB_LIBRARY)
         set(LIBUSB_FOUND TRUE)
-        set(LIBUSB_LINK_LIBRARIES unofficial::libusb::libusb)
-    endif()
-else()
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(LIBUSB QUIET libusb-1.0)
+        # Strip the trailing "/libusb-1.0" so #include <libusb-1.0/libusb.h> works.
+        get_filename_component(_libusb_parent "${LIBUSB_INCLUDE_DIR}" DIRECTORY)
+        set(LIBUSB_INCLUDE_DIRS "${_libusb_parent}" "${LIBUSB_INCLUDE_DIR}")
+        set(LIBUSB_LINK_LIBRARIES "${LIBUSB_LIBRARY}")
     endif()
 endif()
 
