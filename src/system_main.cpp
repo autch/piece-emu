@@ -336,6 +336,7 @@ struct CpuRunner {
     std::unique_ptr<GdbRsp>&   gdb_rsp;
     std::atomic<bool>&         quit_flag;
     std::atomic<uint16_t>&     shared_buttons;
+    AudioOutput*               audio_out = nullptr; // optional; pacing hint
 
     void run()
     {
@@ -411,10 +412,57 @@ struct CpuRunner {
             quit = quit_flag.load(std::memory_order_relaxed);
         };
 
-        // Real-time pacing: sleep until wall time matches simulated time.
-        // Uses the current CPU clock so 24/48 MHz switches are handled correctly.
+        // Real-time pacing.
+        //
+        // Primary mode (audio-clock): when SDL audio is actively consuming
+        // samples, pace on the audio queue depth instead of wall time.  We
+        // keep the SDL stream near TARGET_LEAD_NS of buffered samples; if it
+        // grows beyond that the CPU sleeps, otherwise it runs free.  This
+        // naturally builds a 1–2 frame lead that absorbs transient CPU
+        // stalls (muslib / make_xwave heavy paths) without starving SDL.
+        //
+        // Fallback mode (wall-clock): when audio is absent or not yet
+        // running, pace so emu-time doesn't run ahead of wall-time.
+        //
+        // A per-tick cap keeps the loop responsive to button input and
+        // quit requests even if the audio queue is massively overfilled.
         auto sync_realtime = [&]() {
-            uint32_t cur_hz      = periph.clk.cpu_clock_hz();
+            // Target ring-buffer fill = 25 ms @ 32 kHz = 800 samples.
+            // When above: sleep to let SDL drain.  When below: run free so
+            // emu builds lead faster than realtime (CPU is free to catch up
+            // after a stall).  Cap per-tick sleep to keep responsive.
+            constexpr std::size_t TARGET_FILL   = 800;
+            constexpr uint64_t    MAX_SLEEP_NS  = 20'000'000ULL;
+            constexpr uint64_t    NS_PER_SAMPLE = 1'000'000'000ULL
+                                                / Sound::SAMPLE_RATE;
+            // Consider audio "active" while pushes have occurred within the
+            // last ~100 ms of emulated time (≈2.4M cycles @ 24 MHz, 4.8M @
+            // 48 MHz; scale via cur_hz below).  Outside that window the app
+            // is silent, so fall back to wall-clock pacing.
+            uint32_t cur_hz              = periph.clk.cpu_clock_hz();
+            uint64_t active_window_cyc   = cur_hz / 10ULL; // 100 ms
+
+            auto audio_producing = [&]() -> bool {
+                if (!audio_out || !audio_out->is_open()) return false;
+                uint64_t last = periph.sound.last_push_cycle();
+                if (last == 0) return false;
+                return (total_cycles - last) < active_window_cyc;
+            };
+
+            if (audio_producing()) {
+                std::size_t avail = periph.sound.available();
+                if (avail > TARGET_FILL) {
+                    uint64_t excess   = avail - TARGET_FILL;
+                    uint64_t sleep_ns = excess * NS_PER_SAMPLE;
+                    if (sleep_ns > MAX_SLEEP_NS) sleep_ns = MAX_SLEEP_NS;
+                    SDL_DelayNS(sleep_ns);
+                }
+                // Keep wall-clock reference fresh for clean fallback.
+                pace_last_cycle = total_cycles;
+                pace_last_ns    = SDL_GetTicksNS();
+                return;
+            }
+
             uint64_t expected_ns = (total_cycles - pace_last_cycle)
                                    * 1'000'000'000ULL / cur_hz;
             uint64_t now_ns      = SDL_GetTicksNS();
@@ -711,7 +759,8 @@ int main(int argc, char** argv)
 
         // CPU thread
         CpuRunner runner{bus, cpu, periph, cfg, total_cycles,
-                         break_addrs, gdb_rsp, quit_flag, shared_buttons};
+                         break_addrs, gdb_rsp, quit_flag, shared_buttons,
+                         &audio};
         std::thread cpu_thread([&runner]{ runner.run(); });
 
         // Main thread: SDL event loop + rendering

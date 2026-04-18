@@ -52,11 +52,18 @@ void AudioOutput::close()
     sound_ = nullptr;
 }
 
+int AudioOutput::queued_bytes() const
+{
+    if (!stream_) return 0;
+    return SDL_GetAudioStreamQueued(stream_);
+}
+
 void AudioOutput::audio_cb(void* userdata, SDL_AudioStream* stream,
                            int additional_amount, int /*total_amount*/)
 {
     auto* self = static_cast<AudioOutput*>(userdata);
     if (!self || !self->sound_ || additional_amount <= 0) return;
+    self->cb_count_.fetch_add(1, std::memory_order_relaxed);
 
     // additional_amount is in bytes.  Convert to sample count (int16_t).
     const int want_samples = additional_amount / static_cast<int>(sizeof(int16_t));

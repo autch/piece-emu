@@ -44,6 +44,9 @@ void Sound::handle_ch1_start(uint32_t sadr, uint32_t cnt)
     const int32_t pwmc = static_cast<int32_t>(current_pwmc());
     if (pwmc <= 0) return;
 
+    uint64_t now_cyc = get_cycles_ ? get_cycles_() : 0;
+    last_push_cycle_.store(now_cyc, std::memory_order_relaxed);
+
     for (uint32_t i = 0; i < cnt; i++) {
         int32_t v = static_cast<int16_t>(bus_->read16(sadr + i * 2u));
         v -= pwmc;
@@ -61,7 +64,7 @@ void Sound::handle_ch1_start(uint32_t sadr, uint32_t cnt)
     uint64_t delta = static_cast<uint64_t>(cnt)
                    * static_cast<uint64_t>(clk_hz)
                    / static_cast<uint64_t>(SAMPLE_RATE);
-    uint64_t now = get_cycles_ ? get_cycles_() : 0;
+    uint64_t now = now_cyc;
     complete_cycle_ = now + delta;
     pending_        = true;
 

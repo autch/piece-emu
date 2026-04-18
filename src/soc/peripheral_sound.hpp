@@ -68,6 +68,14 @@ public:
     // Number of samples currently buffered.
     std::size_t available() const;
 
+    // CPU cycle counter at the most recent successful ring push.
+    // Returns 0 if the app has never produced audio.  Used by the audio-
+    // clock pacing path to tell "app is producing audio" from "app is
+    // silent but SDL is still pulling zeros".
+    std::uint64_t last_push_cycle() const {
+        return last_push_cycle_.load(std::memory_order_relaxed);
+    }
+
     // Count of samples dropped because the ring buffer was full.
     std::uint64_t drop_count() const {
         return drop_count_.load(std::memory_order_relaxed);
@@ -93,6 +101,7 @@ private:
     std::atomic<std::size_t>   ring_head_{0}; // producer (CPU thread)
     std::atomic<std::size_t>   ring_tail_{0}; // consumer (SDL thread)
     std::atomic<std::uint64_t> drop_count_{0};
+    std::atomic<std::uint64_t> last_push_cycle_{0};
 
     Bus*                 bus_    = nullptr;
     Hsdma*               hsdma_  = nullptr;
