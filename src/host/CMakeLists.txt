@@ -18,6 +18,7 @@ if(SDL3_FOUND)
     target_include_directories(piece_host PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     # piece_soc is required publicly: audio_output.hpp references Sound.
     target_link_libraries(piece_host PUBLIC piece_board piece_soc SDL3::SDL3)
+    set_target_properties(piece_host PROPERTIES LINK_FLAGS "/SUBSYSTEM:CONSOLE")
 else()
     # Stub target so other targets can always link against piece_host.
     add_library(piece_host INTERFACE)

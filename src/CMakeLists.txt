@@ -114,7 +114,14 @@ endif()
 # Requires SDL3.  Enable by building with -DVCPKG_MANIFEST_FEATURES=system.
 # ---------------------------------------------------------------------------
 if(SDL3_FOUND)
-    add_executable(piece-emu-system system_main.cpp)
+    add_executable(piece-emu-system
+        system_main.cpp
+        system/button_input.cpp
+        system/cli_config.cpp
+        system/piece_peripherals.cpp
+        system/cpu_runner.cpp
+    )
+    target_include_directories(piece-emu-system PRIVATE system)
     target_link_libraries(piece-emu-system PRIVATE
         piece_host
         piece_board

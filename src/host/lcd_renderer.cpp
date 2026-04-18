@@ -57,13 +57,14 @@ bool LcdRenderer::init(int scale)
         return false;
     }
 
+    render_buf_.resize(88 * 128);
     return true;
 }
 
 void LcdRenderer::render(const uint8_t pixels[88][128])
 {
-    // Convert 2bpp pixel array to ARGB8888.
-    uint32_t buf[88 * 128];
+    // Convert 2bpp pixel array to ARGB8888 in the heap-allocated staging buffer.
+    uint32_t* buf = render_buf_.data();
     for (int y = 0; y < 88; y++)
         for (int x = 0; x < 128; x++)
             buf[y * 128 + x] = PALETTE[pixels[y][x] & 3u];

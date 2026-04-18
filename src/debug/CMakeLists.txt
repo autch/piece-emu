@@ -4,6 +4,7 @@ add_library(piece_debug STATIC
     semihosting.cpp
     gdb_rsp.cpp
     gdb_rsp_regs.cpp
+    debug_utils.cpp
 )
 
 target_include_directories(piece_debug PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

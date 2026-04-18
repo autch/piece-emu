@@ -182,8 +182,13 @@ private:
     Bus& bus_;
 
     using Handler = void(*)(Cpu&, uint16_t);
-    static const std::array<Handler, 65536> dispatch_;
-    static std::array<Handler, 65536> build_table();
+    // dispatch_ is zero-initialised in BSS and populated in place by
+    // build_table() during dynamic static init.  Returning a 524 KB array by
+    // value from build_table() overflowed the 1 MB Windows default stack
+    // before main(); the in-place fill avoids any large stack frame.
+    static std::array<Handler, 65536> dispatch_;
+    static void build_table(std::array<Handler, 65536>& t);
+    static const bool dispatch_init_;
 
     // ---- Trap internals ----
     void do_trap(int no, int level);

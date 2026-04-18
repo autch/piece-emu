@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <functional>
+#include <vector>
 
 struct SDL_Window;
 struct SDL_Renderer;
@@ -52,4 +53,8 @@ private:
     SDL_Texture*  texture_  = nullptr;
     int           scale_    = 4;
     bool          has_frame_ = false;
+    // Reusable ARGB8888 staging buffer for render().  Heap-allocated in init()
+    // to avoid a 44 KB stack frame every frame (Windows default thread stack
+    // is 1 MB).
+    std::vector<uint32_t> render_buf_;
 };

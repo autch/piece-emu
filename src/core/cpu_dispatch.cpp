@@ -4,8 +4,7 @@
 // Dispatch table construction
 // ============================================================================
 
-std::array<Cpu::Handler, 65536> Cpu::build_table() {
-    std::array<Handler, 65536> t;
+void Cpu::build_table(std::array<Handler, 65536>& t) {
     t.fill(h_undef);
 
     for (uint32_t i = 0; i < 65536; i++) {
@@ -247,8 +246,8 @@ std::array<Cpu::Handler, 65536> Cpu::build_table() {
             continue;
         }
     }
-
-    return t;
 }
 
-const std::array<Cpu::Handler, 65536> Cpu::dispatch_ = Cpu::build_table();
+std::array<Cpu::Handler, 65536> Cpu::dispatch_;
+const bool Cpu::dispatch_init_ =
+    (Cpu::build_table(Cpu::dispatch_), true);
