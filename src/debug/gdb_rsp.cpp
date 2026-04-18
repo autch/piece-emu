@@ -100,7 +100,11 @@ std::string GdbRsp::run(bool single) {
 void GdbRsp::serve_async() {
     async_mode_ = true;
     async_thread_ = std::thread([this]() {
+#ifdef __APPLE__
+        pthread_setname_np("piece-gdb");
+#else
         pthread_setname_np(pthread_self(), "piece-gdb");
+#endif
         serve();
     });
     async_thread_.detach();

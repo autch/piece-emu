@@ -345,8 +345,11 @@ struct CpuRunner {
 
     void run()
     {
+#ifdef __APPLE__
+        pthread_setname_np("piece-cpu");
+#else
         pthread_setname_np(pthread_self(), "piece-cpu");
-
+#endif
         periph.portctrl.set_k5(0xFF);
         periph.portctrl.set_k6(0xFF);
 
@@ -672,7 +675,11 @@ struct CpuRunner {
 // ---------------------------------------------------------------------------
 int main(int argc, char** argv)
 {
+#ifdef __APPLE__
+    pthread_setname_np("piece-sdl");
+#else
     pthread_setname_np(pthread_self(), "piece-sdl");
+#endif
 
     Config cfg = Config::parse(argc, argv);
 
