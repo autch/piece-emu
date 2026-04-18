@@ -1,9 +1,9 @@
 #pragma once
-#include <atomic>
 #include <cstdint>
 
 struct SDL_AudioStream;
 class Sound;
+class AudioLog;
 
 // ============================================================================
 // AudioOutput — SDL3-based audio sink for the P/ECE PWM emulator.
@@ -32,24 +32,18 @@ public:
     // True if a device is currently open.
     bool is_open() const { return stream_ != nullptr; }
 
-    // Bytes currently queued in the SDL audio stream (pending playback).
-    // Returns 0 when closed.  Used by the CPU loop's audio-clock pacing.
-    int queued_bytes() const;
-
-    // True once the SDL audio callback has fired at least once — i.e. the
-    // device is actively consuming samples.  Lets the CPU loop tell
-    // "audio open but silent" (no pull yet) apart from "audio running".
-    bool is_active() const { return cb_count_.load() > 0; }
-
     // Enable stderr trace for diagnosing audio problems.
     void set_trace(bool v) { trace_ = v; }
     bool trace() const { return trace_; }
+
+    // Attach an AudioLog to record every PULL event.  Null disables.
+    void set_log(AudioLog* log) { log_ = log; }
 
 private:
     SDL_AudioStream* stream_ = nullptr;
     Sound*           sound_  = nullptr;
     bool             trace_  = false;
-    std::atomic<uint64_t> cb_count_{0};
+    AudioLog*        log_    = nullptr;
 
     // SDL audio callback (thread: SDL audio thread).
     static void audio_cb(void* userdata, SDL_AudioStream* stream,

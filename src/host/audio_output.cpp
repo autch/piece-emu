@@ -1,4 +1,5 @@
 #include "audio_output.hpp"
+#include "audio_log.hpp"
 #include "peripheral_sound.hpp"
 
 #include <SDL3/SDL.h>
@@ -52,31 +53,32 @@ void AudioOutput::close()
     sound_ = nullptr;
 }
 
-int AudioOutput::queued_bytes() const
-{
-    if (!stream_) return 0;
-    return SDL_GetAudioStreamQueued(stream_);
-}
-
 void AudioOutput::audio_cb(void* userdata, SDL_AudioStream* stream,
                            int additional_amount, int /*total_amount*/)
 {
     auto* self = static_cast<AudioOutput*>(userdata);
     if (!self || !self->sound_ || additional_amount <= 0) return;
-    self->cb_count_.fetch_add(1, std::memory_order_relaxed);
 
     // additional_amount is in bytes.  Convert to sample count (int16_t).
     const int want_samples = additional_amount / static_cast<int>(sizeof(int16_t));
     if (want_samples <= 0) return;
 
     std::vector<int16_t> buf(want_samples, 0);
+    const std::size_t avail_before = self->sound_->available();
     const std::size_t got = self->sound_->pop(buf.data(),
                                               static_cast<std::size_t>(want_samples));
     // Underrun: remaining samples are already 0 (silence).
-    (void)got;
 
     SDL_PutAudioStreamData(stream, buf.data(),
                            want_samples * static_cast<int>(sizeof(int16_t)));
+
+    if (self->log_) {
+        int sdl_queued = SDL_GetAudioStreamQueued(stream);
+        self->log_->log_pull(static_cast<int64_t>(want_samples),
+                             static_cast<int64_t>(got),
+                             static_cast<int64_t>(avail_before),
+                             static_cast<int64_t>(sdl_queued));
+    }
 
     if (self->trace_) {
         static int cb_count = 0;

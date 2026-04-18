@@ -32,6 +32,7 @@
 #include "s6b0741.hpp"
 #include "lcd_renderer.hpp"
 #include "audio_output.hpp"
+#include "audio_log.hpp"
 
 #include <CLI/CLI.hpp>
 #include <SDL3/SDL.h>
@@ -199,6 +200,7 @@ struct Config {
     bool                     gdb_debug  = false;
     bool                     no_audio   = false;
     bool                     audio_trace = false;
+    std::string              audio_log_path;
     std::vector<std::string> wp_write_specs, wp_read_specs, wp_rw_specs;
     std::vector<std::string> break_specs;
 
@@ -230,6 +232,8 @@ struct Config {
             "Disable SDL3 audio output (default: enabled)");
         app.add_flag("--audio-trace", cfg.audio_trace,
             "Print sound subsystem trace events to stderr");
+        app.add_option("--audio-log", cfg.audio_log_path,
+            "Write audio PUSH/PULL/PACE events to FILE (TSV)");
         app.add_option("--wp-write", cfg.wp_write_specs,
             "Write watchpoint: ADDR or ADDR:SIZE (hex, repeatable)");
         app.add_option("--wp-read",  cfg.wp_read_specs,
@@ -337,6 +341,7 @@ struct CpuRunner {
     std::atomic<bool>&         quit_flag;
     std::atomic<uint16_t>&     shared_buttons;
     AudioOutput*               audio_out = nullptr; // optional; pacing hint
+    AudioLog*                  audio_log = nullptr; // optional; diagnostic log
 
     void run()
     {
@@ -427,11 +432,14 @@ struct CpuRunner {
         // A per-tick cap keeps the loop responsive to button input and
         // quit requests even if the audio queue is massively overfilled.
         auto sync_realtime = [&]() {
-            // Target ring-buffer fill = 25 ms @ 32 kHz = 800 samples.
-            // When above: sleep to let SDL drain.  When below: run free so
-            // emu builds lead faster than realtime (CPU is free to catch up
-            // after a stall).  Cap per-tick sleep to keep responsive.
-            constexpr std::size_t TARGET_FILL   = 800;
+            // Target ring-buffer fill = 50 ms @ 32 kHz = 1600 samples.
+            // Must exceed SDL's single pull burst (~1365 samples every
+            // 42 ms): SDL drains the ring in one go then stays silent for
+            // ~42 ms, so avail must be > pull-size before each burst to
+            // avoid underrun.  RING_SIZE (4096) provides the headroom
+            // above TARGET_FILL so emu bursts don't hit the cap and drop
+            // samples — the "ring must be ~2× max usage" rule.
+            constexpr std::size_t TARGET_FILL   = 1600;
             constexpr uint64_t    MAX_SLEEP_NS  = 20'000'000ULL;
             constexpr uint64_t    NS_PER_SAMPLE = 1'000'000'000ULL
                                                 / Sound::SAMPLE_RATE;
@@ -451,12 +459,17 @@ struct CpuRunner {
 
             if (audio_producing()) {
                 std::size_t avail = periph.sound.available();
+                uint64_t sleep_ns = 0;
                 if (avail > TARGET_FILL) {
-                    uint64_t excess   = avail - TARGET_FILL;
-                    uint64_t sleep_ns = excess * NS_PER_SAMPLE;
+                    uint64_t excess = avail - TARGET_FILL;
+                    sleep_ns = excess * NS_PER_SAMPLE;
                     if (sleep_ns > MAX_SLEEP_NS) sleep_ns = MAX_SLEEP_NS;
                     SDL_DelayNS(sleep_ns);
                 }
+                if (audio_log)
+                    audio_log->log_pace(total_cycles, 0,
+                                        static_cast<int64_t>(avail),
+                                        static_cast<int64_t>(sleep_ns));
                 // Keep wall-clock reference fresh for clean fallback.
                 pace_last_cycle = total_cycles;
                 pace_last_ns    = SDL_GetTicksNS();
@@ -467,8 +480,15 @@ struct CpuRunner {
                                    * 1'000'000'000ULL / cur_hz;
             uint64_t now_ns      = SDL_GetTicksNS();
             uint64_t wall_ns     = now_ns - pace_last_ns;
-            if (wall_ns < expected_ns)
-                SDL_DelayNS(expected_ns - wall_ns);
+            uint64_t sleep_ns    = 0;
+            if (wall_ns < expected_ns) {
+                sleep_ns = expected_ns - wall_ns;
+                SDL_DelayNS(sleep_ns);
+            }
+            if (audio_log)
+                audio_log->log_pace(total_cycles, 1,
+                                    static_cast<int64_t>(periph.sound.available()),
+                                    static_cast<int64_t>(sleep_ns));
             pace_last_cycle = total_cycles;
             pace_last_ns    = SDL_GetTicksNS();
         };
@@ -746,6 +766,29 @@ int main(int argc, char** argv)
                 std::fprintf(stderr, "Audio disabled (open failed)\n");
         }
 
+        // Optional audio event log (diagnostic).  Writer is lock-guarded
+        // with a background flush thread, so real-time paths never call
+        // fprintf directly.
+        AudioLog audio_log;
+        if (!cfg.audio_log_path.empty()) {
+            if (audio_log.open(cfg.audio_log_path)) {
+                audio.set_log(&audio_log);
+                periph.sound.on_push =
+                    [&audio_log](uint64_t cyc, std::size_t cnt,
+                                 std::size_t avail, uint64_t dropped) {
+                        audio_log.log_push(cyc,
+                            static_cast<int64_t>(cnt),
+                            static_cast<int64_t>(avail),
+                            static_cast<int64_t>(dropped));
+                    };
+                std::fprintf(stderr, "Audio log: %s\n",
+                             cfg.audio_log_path.c_str());
+            } else {
+                std::fprintf(stderr, "Audio log open failed: %s\n",
+                             cfg.audio_log_path.c_str());
+            }
+        }
+
         // GDB RSP server (async, background thread)
         std::unique_ptr<GdbRsp> gdb_rsp;
         if (cfg.gdb_port > 0) {
@@ -760,7 +803,7 @@ int main(int argc, char** argv)
         // CPU thread
         CpuRunner runner{bus, cpu, periph, cfg, total_cycles,
                          break_addrs, gdb_rsp, quit_flag, shared_buttons,
-                         &audio};
+                         &audio, &audio_log};
         std::thread cpu_thread([&runner]{ runner.run(); });
 
         // Main thread: SDL event loop + rendering
@@ -789,6 +832,7 @@ int main(int argc, char** argv)
 
         cpu_thread.join();
         audio.close();
+        audio_log.close();
         renderer.destroy();
 
         if (cpu.state.fault)

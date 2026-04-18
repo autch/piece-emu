@@ -72,6 +72,11 @@ void Sound::handle_ch1_start(uint32_t sadr, uint32_t cnt)
         std::fprintf(stderr, "[SND] ch1_start sadr=0x%08x cnt=%u now=%llu done=%llu\n",
             sadr, cnt, (unsigned long long)now, (unsigned long long)complete_cycle_);
     }
+
+    if (on_push) {
+        on_push(now_cyc, static_cast<std::size_t>(cnt), available(),
+                drop_count_.load(std::memory_order_relaxed));
+    }
 }
 
 void Sound::tick(uint64_t cycles)

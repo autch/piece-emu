@@ -87,14 +87,30 @@ public:
     // Enable --audio-trace stderr event log.
     void set_trace(bool v) { trace_ = v; }
 
+    // Optional hook fired after every successful ch1_start burst.  Used
+    // by the frontend to feed the audio-event log without introducing
+    // a soc → host dependency.  Called from the CPU thread.
+    //   cpu_cyc       — current CPU cycle counter
+    //   cnt           — samples in this burst
+    //   avail_after   — ring fill level after push
+    //   dropped_total — cumulative drop count
+    std::function<void(std::uint64_t cpu_cyc,
+                       std::size_t   cnt,
+                       std::size_t   avail_after,
+                       std::uint64_t dropped_total)> on_push;
+
 private:
     // Default T16 Ch.1 CRA value from snd.c (32 kHz @ 24 MHz).
     static constexpr std::uint16_t PWMC_DEFAULT = 750;
 
-    // Ring buffer — 2048 samples = 64 ms @ 32 kHz.  Large enough to
-    // absorb the 60 Hz sync_realtime burst (~17 ms) and SDL's per-call
-    // pull size (~20 ms) simultaneously.
-    static constexpr std::size_t RING_SIZE = 2048;
+    // Ring buffer — 4096 samples = 128 ms @ 32 kHz.  Sized to absorb:
+    //   * SDL's bursty pull pattern (~1365 samples every 42 ms, drawn
+    //     as two back-to-back callbacks 15 µs apart)
+    //   * emu-side production bursts between sync_realtime() ticks
+    //   * a couple of frames of pacing slack without hitting the cap
+    // Hitting the cap causes try_push() to drop samples — audible as
+    // clicks/pops — so the ring must stay above TARGET_FILL + headroom.
+    static constexpr std::size_t RING_SIZE = 4096;
     static_assert((RING_SIZE & (RING_SIZE - 1)) == 0, "RING_SIZE must be power of 2");
 
     std::int16_t               ring_[RING_SIZE]{};
