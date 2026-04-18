@@ -69,13 +69,20 @@ void LcdRenderer::render(const uint8_t pixels[88][128])
             buf[y * 128 + x] = PALETTE[pixels[y][x] & 3u];
 
     SDL_UpdateTexture(texture_, nullptr, buf, 128 * sizeof(uint32_t));
-    SDL_RenderClear(renderer_);
+    has_frame_ = true;
+    present_last();
+}
 
-    // Stretch the 128×88 texture to fill the full window.
-    SDL_FRect dst = {0.0f, 0.0f,
-                     static_cast<float>(128 * scale_),
-                     static_cast<float>(88  * scale_)};
-    SDL_RenderTexture(renderer_, texture_, nullptr, &dst);
+void LcdRenderer::present_last()
+{
+    if (!renderer_ || !texture_) return;
+    SDL_RenderClear(renderer_);
+    if (has_frame_) {
+        SDL_FRect dst = {0.0f, 0.0f,
+                         static_cast<float>(128 * scale_),
+                         static_cast<float>(88  * scale_)};
+        SDL_RenderTexture(renderer_, texture_, nullptr, &dst);
+    }
     SDL_RenderPresent(renderer_);
 }
 
@@ -96,6 +103,15 @@ bool LcdRenderer::poll_events(const KeyCb& key_cb)
             if (key_cb)
                 key_cb(e.type == SDL_EVENT_KEY_DOWN,
                        static_cast<int>(e.key.scancode));
+            break;
+        case SDL_EVENT_WINDOW_EXPOSED:
+        case SDL_EVENT_WINDOW_SHOWN:
+        case SDL_EVENT_WINDOW_RESTORED:
+            // Remote desktop (Xrdp/VNC) may not preserve the back buffer
+            // when the window is re-exposed. Re-present the last frame so
+            // occluded regions repaint without waiting for the next CPU
+            // LCD transfer.
+            present_last();
             break;
         default:
             break;

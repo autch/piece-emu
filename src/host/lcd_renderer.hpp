@@ -31,6 +31,11 @@ public:
     // Blit pixels[88][128] (2bpp) to the SDL3 window.
     void render(const uint8_t pixels[88][128]);
 
+    // Re-present the last rendered texture. Called on window expose events
+    // so remote-desktop setups (Xrdp/VNC) repaint occluded regions even when
+    // the CPU has not pushed a new LCD frame.
+    void present_last();
+
     // Key event callback type: (is_down, scancode).
     using KeyCb = std::function<void(bool is_down, int scancode)>;
 
@@ -46,4 +51,5 @@ private:
     SDL_Renderer* renderer_ = nullptr;
     SDL_Texture*  texture_  = nullptr;
     int           scale_    = 4;
+    bool          has_frame_ = false;
 };
