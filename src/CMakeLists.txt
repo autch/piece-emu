@@ -79,13 +79,27 @@ target_link_libraries(piece-emu PRIVATE
 if(GTest_FOUND)
     enable_testing()
 
-    add_executable(piece_unit_tests
+    # Split into two binaries along the library boundary.  Each binary lists
+    # ~60–100 tests instead of 161, which keeps `gtest_discover_tests`'
+    # per-test static-init / startup cost small enough to avoid the Windows
+    # stack-overflow we hit with a single monolithic binary.
+    #   piece_core_tests — CPU / BCU / EXT / PSR / shift / disasm
+    #   piece_soc_tests  — on-chip peripherals (INTC / T8 / T16 / PortCtrl /
+    #                      RTC / SIF3 / Sound)
+    add_executable(piece_core_tests
         tests/unit/test_ext_imm.cpp
         tests/unit/test_psr_flags.cpp
         tests/unit/test_shift_decode.cpp
         tests/unit/test_disasm.cpp
         tests/unit/test_bcu.cpp
         tests/unit/test_cpu_instructions.cpp
+    )
+    target_link_libraries(piece_core_tests PRIVATE
+        piece_core
+        GTest::gtest_main
+    )
+
+    add_executable(piece_soc_tests
         tests/unit/test_peripheral_intc.cpp
         tests/unit/test_peripheral_t8.cpp
         tests/unit/test_peripheral_t16.cpp
@@ -94,16 +108,15 @@ if(GTest_FOUND)
         tests/unit/test_peripheral_sif3.cpp
         tests/unit/test_peripheral_sound.cpp
     )
-
-    # Tests only need soc + core (no POSIX debug layer required).
-    target_link_libraries(piece_unit_tests PRIVATE
+    target_link_libraries(piece_soc_tests PRIVATE
         piece_soc
         piece_core
         GTest::gtest_main
     )
 
     include(GoogleTest)
-    gtest_add_tests(TARGET piece_unit_tests)
+    gtest_discover_tests(piece_core_tests)
+    gtest_discover_tests(piece_soc_tests)
 else()
     message(WARNING "Google Test not found — skipping unit tests (piece_unit_tests). "
                     "Run cmake with -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake")
