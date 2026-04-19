@@ -334,6 +334,28 @@ lldb
 
 Use `--snapshot-path DIR` to set the directory (default: current). Filenames follow `piece_YYYYMMDD_HHMMSS_mmm.png`. PNG encoding uses the bundled header-only library `src/third_party/stb/stb_image_write.h` (Sean Barrett, public domain / MIT dual license) at compression level 1 (speed over size — a 128×88 image compresses in well under a millisecond).
 
+### ゲームパッド操作（piece-emu-system）/ Gamepad Controls
+
+SDL3 Gamepad サブシステム経由でゲームパッドに対応しています。Windows では XInput 対応のコントローラ（Xbox 360 / Xbox One / 互換品など）をそのまま使用できます。Linux では evdev、macOS では GameController フレームワーク経由で SDL3 が自動認識します。コントローラはホットプラグ対応で、起動後の接続・切断も反映されます。
+
+Gamepads are supported via SDL3's Gamepad subsystem. On Windows, any XInput-compatible controller (Xbox 360 / Xbox One / compatible pads) works out of the box. On Linux (evdev) and macOS (GameController framework) SDL3 auto-detects connected devices. Hot-plug is supported.
+
+| ゲームパッド入力 | P/ECE ボタン |
+|---|---|
+| D-pad / 左スティック (L-stick) | 十字キー / D-pad |
+| A ボタン (SDL `SOUTH`) | A |
+| B ボタン (SDL `EAST`) | B |
+| `Start` | START |
+| `Back` (Select / Share) | SELECT |
+
+デフォルトは **XInput 標準のラベル配列**（A ラベル＝P/ECE A、B ラベル＝P/ECE B）です。`--swap-ab` を指定すると **実機の物理配列**（右側のボタン＝A、左側のボタン＝B、任天堂配列）に切り替わります。SDL3 はフェイスボタンを位置で正規化するため、この切り替えは Xbox・PlayStation・Nintendo いずれのパッドでも同一に機能します。
+
+The default layout follows **XInput face labels** (A label → P/ECE A, B label → P/ECE B). Pass `--swap-ab` to switch to the **physical layout of the real P/ECE hardware** (right-side face button = A, left-side = B — matching Nintendo's label scheme). SDL3 normalises face buttons by position, so this flag works consistently across Xbox / PlayStation / Nintendo pads.
+
+**Windows で Steam を起動している場合の注意**: アプリ終了操作の `START` + `SELECT` 同時押しが、Steam Input によって Guide ボタン合成 → Xbox Game Bar・タスクビュー・オンスクリーンキーボードなどの OS 機能にフックされ、エミュレータにイベントが届かなくなります。**エミュレータ使用時は Steam を終了してください。** Steam 非起動状態であれば追加設定なしで正常に動作します。
+
+**Note for Windows users with Steam running**: the app-exit combination `START` + `SELECT` is intercepted by Steam Input, which synthesises a Guide button press and triggers OS features (Xbox Game Bar, Task View, on-screen keyboard) — the event never reaches the emulator. **Quit Steam before running `piece-emu-system`.** With Steam not running, no additional configuration is needed.
+
 ### エミュレータメモリマップ / Emulator Memory Map
 
 ```

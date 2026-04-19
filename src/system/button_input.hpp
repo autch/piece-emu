@@ -25,3 +25,14 @@ struct ButtonState {
 // false for KEY_UP.  `scancode` is an SDL_Scancode (passed as int to keep
 // the header SDL-agnostic; the .cpp translates).
 void handle_key(bool is_down, int scancode, ButtonState& btn);
+
+// Apply an SDL gamepad button event.  `gp_button` is an SDL_GamepadButton.
+// If `swap_ab` is true, map to P/ECE physical layout (right=A, left=B)
+// instead of the default Xbox-label mapping.
+void handle_gamepad_button(bool is_down, int gp_button, ButtonState& btn,
+                           bool swap_ab = false);
+
+// Apply an SDL gamepad axis event (left stick / triggers → D-pad via
+// threshold).  `axis` is an SDL_GamepadAxis; `value` is the raw int16 axis
+// value from SDL_EVENT_GAMEPAD_AXIS_MOTION.
+void handle_gamepad_axis(int axis, int value, ButtonState& btn);

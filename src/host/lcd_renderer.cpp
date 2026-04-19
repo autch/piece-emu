@@ -18,7 +18,7 @@ LcdRenderer::~LcdRenderer()
 
 bool LcdRenderer::init(int scale)
 {
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return false;
     }
@@ -85,7 +85,9 @@ void LcdRenderer::present_last()
     SDL_RenderPresent(renderer_);
 }
 
-bool LcdRenderer::poll_events(const KeyCb& key_cb)
+bool LcdRenderer::poll_events(const KeyCb& key_cb,
+                              const PadButtonCb& pad_btn_cb,
+                              const PadAxisCb& pad_axis_cb)
 {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
@@ -102,6 +104,40 @@ bool LcdRenderer::poll_events(const KeyCb& key_cb)
             if (key_cb)
                 key_cb(e.type == SDL_EVENT_KEY_DOWN,
                        static_cast<int>(e.key.scancode));
+            break;
+        case SDL_EVENT_GAMEPAD_ADDED:
+            // Open the first available gamepad; ignore subsequent ones.
+            if (!gamepad_) {
+                gamepad_ = SDL_OpenGamepad(e.gdevice.which);
+                if (gamepad_) {
+                    std::fprintf(stderr, "[PAD] connected: %s (id=%u)\n",
+                        SDL_GetGamepadName(gamepad_),
+                        static_cast<unsigned>(e.gdevice.which));
+                } else {
+                    std::fprintf(stderr, "[PAD] SDL_OpenGamepad failed: %s\n",
+                                 SDL_GetError());
+                }
+            }
+            break;
+        case SDL_EVENT_GAMEPAD_REMOVED:
+            if (gamepad_ &&
+                SDL_GetGamepadID(gamepad_) == e.gdevice.which) {
+                std::fprintf(stderr, "[PAD] disconnected (id=%u)\n",
+                    static_cast<unsigned>(e.gdevice.which));
+                SDL_CloseGamepad(gamepad_);
+                gamepad_ = nullptr;
+            }
+            break;
+        case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+        case SDL_EVENT_GAMEPAD_BUTTON_UP:
+            if (pad_btn_cb)
+                pad_btn_cb(e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN,
+                           static_cast<int>(e.gbutton.button));
+            break;
+        case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+            if (pad_axis_cb)
+                pad_axis_cb(static_cast<int>(e.gaxis.axis),
+                            static_cast<int>(e.gaxis.value));
             break;
         case SDL_EVENT_WINDOW_EXPOSED:
         case SDL_EVENT_WINDOW_SHOWN:
@@ -121,6 +157,7 @@ bool LcdRenderer::poll_events(const KeyCb& key_cb)
 
 void LcdRenderer::destroy()
 {
+    if (gamepad_)  { SDL_CloseGamepad(gamepad_);     gamepad_  = nullptr; }
     if (texture_)  { SDL_DestroyTexture(texture_);   texture_  = nullptr; }
     if (renderer_) { SDL_DestroyRenderer(renderer_); renderer_ = nullptr; }
     if (window_)   { SDL_DestroyWindow(window_);     window_   = nullptr; }

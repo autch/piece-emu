@@ -6,6 +6,7 @@
 struct SDL_Window;
 struct SDL_Renderer;
 struct SDL_Texture;
+struct SDL_Gamepad;
 
 // ============================================================================
 // LcdRenderer — SDL3-based display for the S6B0741 LCD (128×88 pixels)
@@ -39,10 +40,17 @@ public:
 
     // Key event callback type: (is_down, scancode).
     using KeyCb = std::function<void(bool is_down, int scancode)>;
+    // Gamepad button event: (is_down, SDL_GamepadButton).
+    using PadButtonCb = std::function<void(bool is_down, int gp_button)>;
+    // Gamepad axis event: (SDL_GamepadAxis, int16_t value).
+    using PadAxisCb   = std::function<void(int axis, int value)>;
 
-    // Poll SDL3 events.  Calls key_cb for key events.
+    // Poll SDL3 events.  Calls key_cb for keyboard, pad_btn_cb / pad_axis_cb
+    // for any connected gamepad.  Gamepad hot-plug is handled internally.
     // Returns false when the user closes the window (SDL_EVENT_QUIT).
-    bool poll_events(const KeyCb& key_cb);
+    bool poll_events(const KeyCb& key_cb,
+                     const PadButtonCb& pad_btn_cb = {},
+                     const PadAxisCb&   pad_axis_cb = {});
 
     // Release SDL3 resources.  Safe to call even if init() was not called.
     void destroy();
@@ -57,4 +65,8 @@ private:
     // to avoid a 44 KB stack frame every frame (Windows default thread stack
     // is 1 MB).
     std::vector<uint32_t> render_buf_;
+    // First connected gamepad.  Opened on SDL_EVENT_GAMEPAD_ADDED and closed
+    // on SDL_EVENT_GAMEPAD_REMOVED.  Additional gamepads are ignored — the
+    // P/ECE has only one controller.
+    SDL_Gamepad*  gamepad_  = nullptr;
 };

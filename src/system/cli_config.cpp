@@ -29,6 +29,8 @@ Config Config::parse(int argc, char** argv)
         "Print GDB RSP packet traffic to stderr");
     app.add_flag("--no-audio", cfg.no_audio,
         "Disable SDL3 audio output (default: enabled)");
+    app.add_flag("--swap-ab", cfg.swap_ab,
+        "Swap gamepad A/B to match P/ECE physical layout (right=A, left=B)");
     app.add_flag("--audio-trace", cfg.audio_trace,
         "Print sound subsystem trace events to stderr");
     app.add_option("--audio-log", cfg.audio_log_path,

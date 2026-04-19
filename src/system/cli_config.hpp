@@ -23,6 +23,11 @@ struct Config {
     uint16_t                 gdb_port   = 0;
     bool                     gdb_debug  = false;
     bool                     no_audio   = false;
+    // Gamepad face-button layout.  Default (false) follows Xbox labels:
+    // SOUTH=A, EAST=B.  With --swap-ab (true) the mapping follows the
+    // P/ECE physical layout (Nintendo style: right face button = A,
+    // left = B): EAST=A, WEST/SOUTH=B.
+    bool                     swap_ab    = false;
     bool                     audio_trace = false;
     std::string              audio_log_path;
     std::string              snapshot_path = "."; // directory for PNG screenshots
