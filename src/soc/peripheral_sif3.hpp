@@ -46,6 +46,9 @@ public:
     using TxdCallback = std::function<void(uint8_t)>;
     void set_txd_callback(TxdCallback cb) { txd_cb_ = std::move(cb); }
 
+    // Clear register state; preserves attach pointers and txd_cb_.
+    void reset();
+
     // Direct register access (for unit tests)
     uint8_t ctl()    const { return ctl_; }
     uint8_t status() const { return status_; }

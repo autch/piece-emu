@@ -60,6 +60,10 @@ public:
     void attach(Bus& bus,
                 std::function<void(int trap_no, int level)> assert_trap);
 
+    // Clear all register state (priority, IEN, ISR, IDMA, level overrides).
+    // Preserves assert_trap_ callback.
+    void reset();
+
     // Called by peripheral devices when an interrupt event occurs.
     // Sets the ISR flag, checks IEN and priority, delivers if accepted.
     // If level_override >= 0, the trap is delivered at that level instead of

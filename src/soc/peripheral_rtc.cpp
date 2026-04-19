@@ -21,6 +21,20 @@ void ClockTimer::tick(uint64_t cpu_cycles)
     }
 }
 
+void ClockTimer::reset()
+{
+    rtcstop_ = 0;
+    rtccr_   = 0;
+    rtcsel_  = 0x20;   // OSC3 running
+    rtcien_  = 0;
+    rtcsta_  = 0;
+    sec_ = 0; min_ = 0; hour_ = 0;
+    day_ = 1; mon_ = 1; year_ = 0;
+    clk_phase_ = false;
+    next_half_cycle_ = clk_ ? half_period(clk_->cpu_clock_hz())
+                            : 24'000'000u / 64u;
+}
+
 void ClockTimer::attach(Bus& bus, InterruptController& /*intc*/,
                          const ClockControl& clk)
 {

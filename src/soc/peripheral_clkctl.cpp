@@ -77,6 +77,17 @@ void ClockControl::set_p07(bool slow)
     if (on_clock_change) on_clock_change(cpu_clock_hz());
 }
 
+void ClockControl::reset()
+{
+    clksel_t8_    = 0;
+    for (auto& b : clkctl_t16_) b = 0;
+    clkctl_t8_01_ = 0;
+    clkctl_t8_23_ = 0;
+    pwrctl_       = 0;
+    ++config_gen_; // invalidate cached per-timer cycles-per-count
+    // on_clock_change is intentionally preserved; caller re-invokes it.
+}
+
 void ClockControl::attach(Bus& bus)
 {
     // 0x040140: c_CLKSEL_T8_45 (lo) + Dummy (hi) — not needed, absorb

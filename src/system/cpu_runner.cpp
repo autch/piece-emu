@@ -184,6 +184,42 @@ void CpuRunner::run()
 
     while (!quit && !cpu.state.fault) {
 
+        // -----------------------------------------------------------------
+        // Reset handshake (main thread → CPU thread).
+        //
+        // F5 / Shift+F5 in the SDL event loop set reset_request.  We
+        // acknowledge it at this outer-loop boundary so no instruction is
+        // torn mid-flight, then re-seed CPU + peripheral state and the
+        // pacing/wake anchors.  total_cycles is left monotonic (only
+        // deltas matter for pacing).
+        // -----------------------------------------------------------------
+        if (int req = reset_request.load(std::memory_order_acquire)) {
+            reset_request.store(0, std::memory_order_release);
+            bool cold = (req == 2);
+            std::fprintf(stderr,
+                "[RESET] %s start at cycle %llu\n",
+                cold ? "COLD" : "HOT",
+                static_cast<unsigned long long>(total_cycles));
+            periph.reset(cold);
+            cpu.reset(); // reads fresh reset vector from 0xC00000
+            // Re-apply the button state we last received — portctrl
+            // was wiped on cold start, and even on hot start we need
+            // to re-drive K5D/K6D.
+            periph.portctrl.set_k5(0xFF);
+            periph.portctrl.set_k6(0xFF);
+            uint16_t btns = shared_buttons.load(std::memory_order_relaxed);
+            periph.portctrl.set_k5(static_cast<uint8_t>(btns >> 8));
+            periph.portctrl.set_k6(static_cast<uint8_t>(btns));
+            // Re-seed pacing anchors and wake schedules.
+            pace_last_cycle = total_cycles;
+            pace_last_ns    = SDL_GetTicksNS();
+            next_render     = total_cycles + periph.clk.cpu_clock_hz() / 60;
+            next_event_poll = total_cycles + EVENT_INTERVAL;
+            update_timer_wake();
+            periph.intc.set_current_il(cpu.state.psr.il());
+            continue;
+        }
+
         // =================================================================
         // GDB RSP async mode
         // =================================================================

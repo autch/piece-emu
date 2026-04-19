@@ -41,6 +41,9 @@ public:
     // Returns the next cycle at which the 1 Hz flag will toggle.
     uint64_t next_wake_cycle() const override { return next_half_cycle_; }
 
+    // Reset register + scheduling state; preserves attach-bound pointers.
+    void reset();
+
     // Direct register access (for unit tests)
     uint8_t rtcsel() const { return rtcsel_; }
     uint8_t rtcsta() const { return rtcsta_; }

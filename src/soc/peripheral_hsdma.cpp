@@ -164,6 +164,14 @@ void Hsdma::register_channel(Bus& bus, int ch)
     });
 }
 
+void Hsdma::reset()
+{
+    for (auto& c : chan_) { c.cnt = 0; c.sadr = 0; c.dadr = 0; c.en = 0; c.tf = 0; }
+    ch0_en = false; ch0_cnt = 0; ch0_sadr = 0;
+    ch1_en = false; ch1_cnt = 0; ch1_sadr = 0;
+    // on_ch0_complete / on_ch1_start / on_ch1_complete are preserved.
+}
+
 void Hsdma::attach(Bus& bus)
 {
     for (int ch = 0; ch < 4; ch++)

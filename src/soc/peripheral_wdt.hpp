@@ -39,6 +39,9 @@ public:
         return next_nmi_cycle_;
     }
 
+    // Reset register + scheduling state; preserves attach-bound callbacks.
+    void reset();
+
 private:
     const ClockControl* clk_ = nullptr;
     std::function<void(int, int)> assert_nmi_;

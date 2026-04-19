@@ -38,6 +38,10 @@ public:
     // Attach to the bus — registers I/O handlers for all four channels.
     void attach(Bus& bus);
 
+    // Clear all four channel register state.  Preserves user-assigned
+    // public callbacks (on_ch0_complete, on_ch1_start, on_ch1_complete).
+    void reset();
+
     // --- Public channel state (read by SIF3 / sound subsystem) ---
 
     // Ch0 state (LCD DMA)

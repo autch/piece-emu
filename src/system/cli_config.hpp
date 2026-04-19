@@ -25,6 +25,7 @@ struct Config {
     bool                     no_audio   = false;
     bool                     audio_trace = false;
     std::string              audio_log_path;
+    std::string              snapshot_path = "."; // directory for PNG screenshots
     std::vector<std::string> wp_write_specs, wp_read_specs, wp_rw_specs;
     std::vector<std::string> break_specs;
 

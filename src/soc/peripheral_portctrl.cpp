@@ -61,6 +61,16 @@ void PortCtrl::check_key_irq()
     }
 }
 
+void PortCtrl::reset()
+{
+    cfk5_ = 0;
+    k5d_  = 0xFF;
+    cfk6_ = 0;
+    k6d_  = 0xFF;
+    for (auto& b : pint_)  b = 0;
+    for (auto& b : pport_) b = 0;
+}
+
 void PortCtrl::attach(Bus& bus, InterruptController& intc, ClockControl* clk)
 {
     intc_ = &intc;

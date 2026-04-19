@@ -50,3 +50,27 @@ uint64_t PiecePeripherals::sleep_wake_cycle()
 {
     return rtc.next_wake_cycle();
 }
+
+void PiecePeripherals::reset(bool cold)
+{
+    intc.reset();
+    clk.reset();
+    for (int i = 0; i < 4; i++) t8_ch[i].reset();
+    for (int i = 0; i < 6; i++) t16_ch[i].reset();
+    wdt.reset();
+    rtc.reset();
+    hsdma.reset();
+    sif3.reset();
+    sound.reset();
+    nmi_count = 0;
+
+    if (cold) {
+        // C33 tech manual 表3.2: cold start also initialises the BCU
+        // external bus registers (0x48120..0x4813F) and the I/O port
+        // control/data registers (0x402C0..0x402DF).  Power-cycle the
+        // external LCD too — hot start leaves its contents intact.
+        bcu_area.reset();
+        portctrl.reset();
+        lcd.reset();
+    }
+}

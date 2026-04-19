@@ -32,6 +32,13 @@ void Sif3::on_txd_write(uint8_t data)
     }
 }
 
+void Sif3::reset()
+{
+    ctl_    = 0;
+    irda_   = 0;
+    status_ = 0x02; // TDBE always set
+}
+
 void Sif3::attach(Bus& bus, InterruptController& intc, Hsdma& hsdma)
 {
     intc_  = &intc;

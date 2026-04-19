@@ -69,6 +69,11 @@ public:
     void set_k5(uint8_t bits);
     void set_k6(uint8_t bits);
 
+    // Clear all K-port / Pint / P-port state.  Called by
+    // PiecePeripherals::reset(cold=true) only — on hot start the port
+    // registers (0x402C0..0x402DF) are preserved per S1C33 tech manual.
+    void reset();
+
     // Direct register access (for unit tests)
     uint8_t k5d()  const { return k5d_;  }
     uint8_t k6d()  const { return k6d_;  }

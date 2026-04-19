@@ -63,6 +63,18 @@ void Timer16bit::raise_crb()
     intc_->raise(static_cast<InterruptController::IrqSource>(base + ch_ * 2));
 }
 
+void Timer16bit::reset()
+{
+    cra_              = 0;
+    crb_              = 0;
+    tc_               = 0;
+    ctl_              = 0;
+    next_tick_cycle_  = 0;
+    cached_cpc_       = 0;
+    cpc_gen_          = UINT32_MAX;
+    cached_wake_      = UINT64_MAX;
+}
+
 void Timer16bit::attach(Bus& bus,
                          InterruptController& intc,
                          const ClockControl& clk)

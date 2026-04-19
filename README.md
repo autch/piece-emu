@@ -306,14 +306,21 @@ lldb
 
 ### キー操作（piece-emu-system）/ Keyboard Controls
 
-| キー | P/ECE ボタン |
+| キー | P/ECE ボタン / 機能 |
 |---|---|
 | `←` `→` `↑` `↓` | 十字キー / D-pad |
 | `Z` | B ボタン / B button |
 | `X` | A ボタン / A button |
 | `Enter` | START |
 | `Backspace` | SELECT |
+| `F5` | ホットスタート / Hot reset（BCU・I/O ポートは保持） |
+| `Shift` + `F5` | コールドスタート / Cold reset（全初期化） |
+| `F12` | スクリーンショット保存（PNG）/ Save PNG screenshot |
 | `Esc` | エミュレータ終了 / Quit |
+
+スクリーンショットの保存先は `--snapshot-path DIR` で指定できます（デフォルト：カレントディレクトリ）。ファイル名は `piece_YYYYMMDD_HHMMSS_mmm.png`。PNG 書き出しは `src/third_party/stb/stb_image_write.h`（Sean Barrett, public domain / MIT dual license）を同梱利用しています。128×88 画素の 8-bit グレースケール PNG を速度優先（圧縮レベル 1）で書き出します。
+
+Use `--snapshot-path DIR` to set the directory (default: current). Filenames follow `piece_YYYYMMDD_HHMMSS_mmm.png`. PNG encoding uses the bundled header-only library `src/third_party/stb/stb_image_write.h` (Sean Barrett, public domain / MIT dual license) at compression level 1 (speed over size — a 128×88 image compresses in well under a millisecond).
 
 ### エミュレータメモリマップ / Emulator Memory Map
 

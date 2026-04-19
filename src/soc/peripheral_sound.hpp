@@ -56,6 +56,12 @@ public:
     // completion IRQ when `cycles` catches up with complete_cycle_.
     void tick(uint64_t cycles);
 
+    // Reset internal DMA/IRQ scheduling and ring buffer.  Preserves
+    // attach-time pointers and user-assigned on_push callback.
+    // Safe to call only when the SDL audio callback is paused or
+    // guaranteed not to run (handshake in CpuRunner guarantees this).
+    void reset();
+
     // Earliest CPU cycle at which tick() needs to fire an IRQ.
     uint64_t next_wake_cycle() const {
         return pending_ ? complete_cycle_ : UINT64_MAX;

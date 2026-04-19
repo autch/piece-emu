@@ -35,5 +35,16 @@ struct CpuRunner {
     AudioOutput*               audio_out = nullptr; // optional; pacing hint
     AudioLog*                  audio_log = nullptr; // optional; diagnostic log
 
+    // Reset request (main thread → CPU thread):
+    //   0 = none, 1 = hot start, 2 = cold start.
+    // Main thread stores a non-zero value; CPU thread CAS-clears it at
+    // the outer-loop boundary and performs the reset.
+    std::atomic<int>           reset_request{0};
+
+    // Called from main thread to request a reset.
+    void request_reset(bool cold) {
+        reset_request.store(cold ? 2 : 1, std::memory_order_release);
+    }
+
     void run();
 };

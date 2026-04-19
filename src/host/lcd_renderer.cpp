@@ -29,11 +29,9 @@ bool LcdRenderer::init(int scale)
         return false;
     }
 
-    // Prefer software renderer for broad compatibility (e.g. Xrdp, VNC).
-    // SDL3 may pick OpenGL/Vulkan by default which doesn't work on all remote
-    // desktop setups.  The software renderer is always available.
-    SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
-
+    // Let SDL3 auto-select the renderer.  Override with the SDL3 standard
+    // environment variable `SDL_RENDER_DRIVER=<name>` if a particular host
+    // needs a specific backend (e.g. `software` for Xrdp/VNC).
     renderer_ = SDL_CreateRenderer(window_, nullptr);
     if (!renderer_) {
         std::fprintf(stderr, "SDL_CreateRenderer failed: %s\n", SDL_GetError());

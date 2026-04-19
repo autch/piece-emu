@@ -50,6 +50,15 @@ struct PiecePeripherals {
     void     tick(uint64_t cycles);
     uint64_t next_wake_cycle();
 
+    // Reset all on-chip peripherals and the board-level LCD.
+    //   cold=false → hot start: 0x48120..0x4813F (BCU area) and
+    //                0x402C0..0x402DF (I/O port ctrl/data) preserved,
+    //                LCD VRAM preserved (external device).
+    //   cold=true  → cold start: also resets BCU area, PortCtrl, S6b0741.
+    // The CPU runner must call clk.on_clock_change after reset so it
+    // re-seeds timer wake / pacing anchors.
+    void     reset(bool cold);
+
     // SLEEP mode: OSC3 is stopped on real hardware, so only OSC1-driven wake
     // sources are valid.  In P/ECE this is RTC (1 Hz) and external input
     // (KEY0 via button press) — the latter is polled in the CPU loop, so

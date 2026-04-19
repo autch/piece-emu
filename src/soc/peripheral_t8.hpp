@@ -36,6 +36,10 @@ public:
     void tick(uint64_t cpu_cycles) override;
     uint64_t next_wake_cycle() const override;
 
+    // Reset register state and cached clock data.  Preserves channel
+    // number, attach-time bus/intc/clk pointers.
+    void reset();
+
     // Direct register access (for unit tests)
     uint8_t ctl() const { return ctl_; }
     uint8_t rld() const { return rld_; }

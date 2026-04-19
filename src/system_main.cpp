@@ -27,6 +27,7 @@
 #include "cli_config.hpp"
 #include "audio_output.hpp"
 #include "audio_log.hpp"
+#include "screenshot.hpp"
 
 #include <SDL3/SDL.h>
 #ifdef _WIN32
@@ -197,13 +198,25 @@ int main(int argc, char** argv)
 
         // Main thread: SDL event loop + rendering
         ButtonState btn;
-        uint8_t     px[88][128];
+        uint8_t     px[88][128] = {}; // last rendered frame (for F12 snapshot)
 
         while (!quit_flag.load(std::memory_order_relaxed)) {
             if (!renderer.poll_events([&](bool is_down, int sc) {
-                    if (is_down && sc == SDL_SCANCODE_ESCAPE) {
-                        quit_flag.store(true, std::memory_order_relaxed);
-                        return;
+                    if (is_down) {
+                        if (sc == SDL_SCANCODE_ESCAPE) {
+                            quit_flag.store(true, std::memory_order_relaxed);
+                            return;
+                        }
+                        if (sc == SDL_SCANCODE_F12) {
+                            save_screenshot_png(cfg.snapshot_path, px);
+                            return;
+                        }
+                        if (sc == SDL_SCANCODE_F5) {
+                            // Shift+F5 = cold start, F5 = hot start.
+                            bool cold = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
+                            runner.request_reset(cold);
+                            return;
+                        }
                     }
                     handle_key(is_down, sc, btn);
                     shared_buttons.store(

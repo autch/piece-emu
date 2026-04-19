@@ -8,6 +8,26 @@
 #include <algorithm>
 #include <cstdio>
 
+void Sound::reset()
+{
+    // Drain pending IRQ schedule.
+    pending_        = false;
+    complete_cycle_ = 0;
+    irq_count_      = 0;
+
+    // Ring buffer: advance tail to head so consumer sees empty; avoids
+    // a torn-producer race since the audio callback runs on another
+    // thread.  The CpuRunner handshake ensures this is called while
+    // the CPU thread is paused, but the SDL audio thread is not —
+    // write the producer index first, then the consumer index.
+    std::size_t h = ring_head_.load(std::memory_order_relaxed);
+    ring_tail_.store(h, std::memory_order_release);
+
+    drop_count_.store(0, std::memory_order_relaxed);
+    last_push_cycle_.store(0, std::memory_order_relaxed);
+    // on_push is preserved.
+}
+
 void Sound::attach(Bus& bus, Hsdma& hsdma, InterruptController& intc,
                    ClockControl& clk,
                    std::function<std::uint64_t()> get_cycles,

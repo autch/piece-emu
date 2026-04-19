@@ -45,6 +45,12 @@ public:
 
     void attach(Bus& bus);
 
+    // Reset all clock-control registers to power-on defaults.  Preserves
+    // on_clock_change (assigned by the CPU runner).  The caller is
+    // responsible for invoking on_clock_change after reset so the CPU
+    // runner re-seeds timer wake points and pacing anchors.
+    void reset();
+
     // Current CPU clock frequency in Hz.
     uint32_t cpu_clock_hz() const;
 

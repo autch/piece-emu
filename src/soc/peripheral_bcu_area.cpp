@@ -24,6 +24,26 @@ void BcuAreaCtrl::on_ttbr_write(uint32_t val)
     cpu_->state.ttbr = val;
 }
 
+void BcuAreaCtrl::reset()
+{
+    a18_15_ = 0x7777;
+    a14_13_ = 0x7777;
+    a12_11_ = 0x7777;
+    a10_9_  = 0x7777;
+    a8_7_   = 0x7777;
+    a6_4_   = 0x7777;
+    bus_ctl_ = 0;
+    dram_    = 0;
+    access_  = 0;
+    ttbr_    = 0x0C0000;
+    // Re-apply derived state on bus/cpu (max-wait, reset TTBR).
+    if (bus_) {
+        bus_->sram_wait  = 7;
+        bus_->flash_wait = 7;
+    }
+    if (cpu_) cpu_->state.ttbr = ttbr_;
+}
+
 void BcuAreaCtrl::attach(Bus& bus, Cpu& cpu)
 {
     bus_ = &bus;

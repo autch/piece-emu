@@ -92,6 +92,13 @@ InterruptController::src_table_[static_cast<int>(Src::NUM_SOURCES)] = {
     /* PORT7   */ {  71,   13,   4,   23,    5,       39,    5 },
 };
 
+void InterruptController::reset()
+{
+    for (auto& r : regs_) r = 0;
+    for (auto& v : level_override_) v = -1;
+    current_il_ = 0;
+}
+
 void InterruptController::attach(Bus& bus,
                                   std::function<void(int, int)> assert_trap)
 {

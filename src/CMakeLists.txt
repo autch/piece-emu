@@ -143,6 +143,13 @@ if(SDL3_FOUND)
         piece_core
         CLI11::CLI11
     )
+    # Windows default main-thread stack is 1 MB.  That is too small for
+    # D3D11CreateDevice (called by both the D3D11 and D3D12 SDL3 renderer
+    # backends) — init internally blows the stack with STACK_OVERFLOW
+    # inside the driver.  Bump to 8 MB to match typical Unix defaults.
+    if(MSVC)
+        target_link_options(piece-emu-system PRIVATE "/STACK:8388608")
+    endif()
     message(STATUS "piece-emu-system target enabled")
 else()
     message(STATUS "SDL3 not found — piece-emu-system target skipped")

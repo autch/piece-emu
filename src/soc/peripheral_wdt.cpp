@@ -2,6 +2,13 @@
 #include "peripheral_clkctl.hpp"
 #include "bus.hpp"
 
+void WatchdogTimer::reset()
+{
+    wrwd_ = 0;
+    ewd_  = 0;
+    next_nmi_cycle_ = 0;
+}
+
 void WatchdogTimer::attach(Bus& bus, const ClockControl& clk,
                              std::function<void(int, int)> assert_nmi)
 {

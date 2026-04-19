@@ -33,6 +33,8 @@ Config Config::parse(int argc, char** argv)
         "Print sound subsystem trace events to stderr");
     app.add_option("--audio-log", cfg.audio_log_path,
         "Write audio PUSH/PULL/PACE events to FILE (TSV)");
+    app.add_option("--snapshot-path", cfg.snapshot_path,
+        "Directory to save F12 screenshots into (default: current dir)");
     app.add_option("--wp-write", cfg.wp_write_specs,
         "Write watchpoint: ADDR or ADDR:SIZE (hex, repeatable)");
     app.add_option("--wp-read",  cfg.wp_read_specs,

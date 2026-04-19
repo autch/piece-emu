@@ -33,6 +33,12 @@ class BcuAreaCtrl {
 public:
     void attach(Bus& bus, Cpu& cpu);
 
+    // Reset all BCU area registers to power-on defaults and re-apply
+    // them to bus.sram_wait / bus.flash_wait / cpu.state.ttbr.
+    // Called by PiecePeripherals::reset(cold=true) only — hot start
+    // preserves 0x48120..0x4813F per S1C33 tech manual.
+    void reset();
+
     // Direct register access (for unit tests)
     uint16_t a10_9()   const { return a10_9_;   }
     uint16_t a6_4()    const { return a6_4_;    }

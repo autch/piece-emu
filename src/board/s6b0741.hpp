@@ -46,6 +46,12 @@ public:
     int page()  const { return page_; }
     int col2()  const { return col2_; }
 
+    // Clear VRAM and address cursor.  Only called by
+    // PiecePeripherals::reset(cold=true); hot start leaves the LCD
+    // contents intact (the S6B0741 is an external device untouched by
+    // a C33 CPU reset on real P/ECE hardware).
+    void reset();
+
 private:
     PortCtrl* portctrl_ = nullptr;
 

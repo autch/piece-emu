@@ -6,6 +6,15 @@ void S6b0741::attach(PortCtrl& portctrl)
     portctrl_ = &portctrl;
 }
 
+void S6b0741::reset()
+{
+    for (int p = 0; p < 16; p++)
+        for (int c = 0; c < 256; c++)
+            vram_[p][c] = 0;
+    page_ = 0;
+    col2_ = 0;
+}
+
 void S6b0741::write(uint8_t data)
 {
     // Hardware wiring inverts bit order — reverse all 8 bits before processing.

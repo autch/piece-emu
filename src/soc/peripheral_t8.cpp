@@ -33,6 +33,16 @@ void Timer8bit::on_ctl_write(uint8_t val)
     }
 }
 
+void Timer8bit::reset()
+{
+    ctl_              = 0;
+    rld_              = 0;
+    ptd_              = 0;
+    next_tick_cycle_  = 0;
+    cached_cpc_       = 0;
+    cpc_gen_          = UINT32_MAX;
+}
+
 void Timer8bit::attach(Bus& bus,
                         InterruptController& intc,
                         const ClockControl& clk)
