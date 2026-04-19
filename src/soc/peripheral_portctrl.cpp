@@ -1,7 +1,6 @@
 #include "peripheral_portctrl.hpp"
 #include "peripheral_clkctl.hpp"
 #include "bus.hpp"
-#include <cstdio>
 
 // K port addresses
 static constexpr uint32_t KPORT_BASE = 0x0402C0;
@@ -37,12 +36,8 @@ void PortCtrl::check_key_irq()
     case 1:  act0 = k6d_ & ~mask0; break;
     default: act0 = 0; break;
     }
-    if (act0 == cmp0) {
-        std::fprintf(stderr,
-            "[KEY_IRQ] KEY0 raised: k5=0x%02X k6=0x%02X SPPK=0x%02X SCPK0=0x%02X SMPK0=0x%02X act=0x%02X cmp=0x%02X\n",
-            k5d_, k6d_, pint_[SPPK], pint_[SCPK0], pint_[SMPK0], act0, cmp0);
+    if (act0 == cmp0)
         intc_->raise(InterruptController::IrqSource::KEY0);
-    }
 
     // KEY1 (FPK1): same logic with SPPK[3:2] and rSCPK1/rSMPK1
     uint8_t mask1 = pint_[SMPK1];
@@ -53,12 +48,8 @@ void PortCtrl::check_key_irq()
     case 1:  act1 = k6d_ & ~mask1; break;
     default: act1 = 0; break;
     }
-    if (act1 == cmp1) {
-        std::fprintf(stderr,
-            "[KEY_IRQ] KEY1 raised: k5=0x%02X k6=0x%02X SPPK=0x%02X SCPK1=0x%02X SMPK1=0x%02X act=0x%02X cmp=0x%02X\n",
-            k5d_, k6d_, pint_[SPPK], pint_[SCPK1], pint_[SMPK1], act1, cmp1);
+    if (act1 == cmp1)
         intc_->raise(InterruptController::IrqSource::KEY1);
-    }
 }
 
 void PortCtrl::reset()
@@ -69,6 +60,7 @@ void PortCtrl::reset()
     k6d_  = 0xFF;
     for (auto& b : pint_)  b = 0;
     for (auto& b : pport_) b = 0;
+    pport_[1] = 0x80; // P/ECE power-on default: P07=1 (OSC3 = 24 MHz)
 }
 
 void PortCtrl::attach(Bus& bus, InterruptController& intc, ClockControl* clk)

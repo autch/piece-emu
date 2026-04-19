@@ -98,9 +98,6 @@ bool LcdRenderer::poll_events(const KeyCb& key_cb,
             if (e.key.repeat) break; // ignore OS key-repeat: kernel detects long press by held state
             [[fallthrough]];
         case SDL_EVENT_KEY_UP:
-            std::fprintf(stderr, "[KEY] %s sc=%d\n",
-                e.type == SDL_EVENT_KEY_DOWN ? "DN" : "UP",
-                static_cast<int>(e.key.scancode));
             if (key_cb)
                 key_cb(e.type == SDL_EVENT_KEY_DOWN,
                        static_cast<int>(e.key.scancode));

@@ -21,8 +21,7 @@ void handle_key(bool is_down, int scancode, ButtonState& btn)
     case SDL_SCANCODE_BACKSPACE:  press(btn.k5, 3); break; // K53 = SELECT
     default: break;
     }
-    if (btn.k5 != old_k5 || btn.k6 != old_k6)
-        std::fprintf(stderr, "[BTN] k5=0x%02X k6=0x%02X\n", btn.k5, btn.k6);
+    (void)old_k5; (void)old_k6;
 }
 
 void handle_gamepad_button(bool is_down, int gp_button, ButtonState& btn,
@@ -60,8 +59,7 @@ void handle_gamepad_button(bool is_down, int gp_button, ButtonState& btn,
     case SDL_GAMEPAD_BUTTON_BACK:       press(btn.k5, 3); break; // K53 = SELECT
     default: break;
     }
-    if (btn.k5 != old_k5 || btn.k6 != old_k6)
-        std::fprintf(stderr, "[PAD] k5=0x%02X k6=0x%02X\n", btn.k5, btn.k6);
+    (void)old_k5; (void)old_k6;
 }
 
 void handle_gamepad_axis(int axis, int value, ButtonState& btn)
@@ -86,6 +84,5 @@ void handle_gamepad_axis(int axis, int value, ButtonState& btn)
         break;
     default: break;
     }
-    if (btn.k6 != old_k6)
-        std::fprintf(stderr, "[PAD] k5=0x%02X k6=0x%02X\n", btn.k5, btn.k6);
+    (void)old_k6;
 }

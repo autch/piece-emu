@@ -95,8 +95,13 @@ private:
     // Port input interrupt (10 bytes, 0x0402C6..0x0402CF)
     uint8_t pint_[10] = {};
 
-    // P port (16 bytes, 0x0402D0..0x0402DF)
-    uint8_t pport_[16] = {};
+    // P port (16 bytes, 0x0402D0..0x0402DF).
+    // pport_[1] = rPD(P0) — bit 7 = P07 (OSC3 speed: 1→24 MHz, 0→48 MHz).
+    // P/ECE power-on default: P07=1.  InitHard preserves P07 via
+    // `bp[0x2d1] = a & 0x80`, so if we start pport_[1] at 0 the kernel
+    // locks P07=0 (OSC3=48 MHz) and apps that toggle P07=1 on exit
+    // silently drop OSC3 below its expected value.
+    uint8_t pport_[16] = {0, 0x80};
 
     InterruptController* intc_ = nullptr;
     ClockControl*        clk_  = nullptr;

@@ -34,9 +34,17 @@ class Bus;
 //   bit 2 — timer 2
 //   bit 3 — timer 3
 //
-// CPU clock (PWRCTL.CLKCHG):
-//   CLKCHG=0 → 48 MHz (OSC3 direct)
-//   CLKCHG=1 → 24 MHz (OSC3 / 2)
+// CPU clock pipeline:
+//   OSC3     = P07==0 ? 48 MHz : 24 MHz      (external oscillator-speed pin)
+//   CPU      = OSC3 / 2^CLKDT                (PWRCTL bits 7:6, 0..3)
+//
+// CLKCHG (PWRCTL bit 2) selects OSC3 vs OSC1 path.  P/ECE always keeps it
+// at 1 (OSC3 path), so we ignore CLKCHG and always route through OSC3.
+//
+// P/ECE default P07 = 1 (OSC3 = 24 MHz).  pceCPUSetSpeed() writes CLKDT to
+// pick ×1/×1/2/×1/4/×1/8 of that.  Apps that want "48 MHz 倍速モード"
+// explicitly drive P07 = 0 to switch OSC3 to 48 MHz, and restore P07 = 1
+// before exiting back to the menu.
 // ============================================================================
 class ClockControl {
 public:
@@ -89,7 +97,8 @@ private:
     uint8_t clkctl_t16_[6] = {}; // 0x040147-0x04014C
     uint8_t clkctl_t8_01_ = 0;   // 0x04014D
     uint8_t clkctl_t8_23_ = 0;   // 0x04014E
-    uint8_t pwrctl_       = 0;   // 0x040180 (CLKCHG at bit 2)
+    uint8_t pwrctl_       = 0;   // 0x040180 (CLKCHG at bit 2, CLKDT at bits 7:6)
+    bool    p07_slow_     = true;  // P/ECE default: P07=1 → OSC3=24 MHz
 
     // Compute timer clock from a CLKCTL byte, selecting clock A or B.
     // base is the CPU clock. Returns 0 if clock is stopped.

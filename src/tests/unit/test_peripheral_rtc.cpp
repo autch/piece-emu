@@ -34,17 +34,17 @@ protected:
 
 // ---------------------------------------------------------------------------
 // Prescaler bit3 must toggle so GetSysClock() can calibrate.  At default
-// cpu_clock_hz (48 MHz) the prescaler ticks every 48 MHz / 256 = 187,500
-// cycles; bit3 toggles every 8 ticks → every 1,500,000 cycles.
+// cpu_clock_hz (24 MHz, P/ECE P07=1 default) the prescaler ticks every
+// 24 MHz / 256 = 93,750 cycles; bit3 toggles every 8 ticks.
 // ---------------------------------------------------------------------------
 TEST_F(RtcFixture, PrescalerBit3_TogglesAtExpectedRate) {
     EXPECT_EQ(0, rtc.rtcsub() & 0x08);
 
     // Advance enough cycles for 8 prescaler ticks.
-    rtc.tick(8 * (48'000'000u / 256u));
+    rtc.tick(8 * (24'000'000u / 256u));
     EXPECT_NE(0, rtc.rtcsub() & 0x08) << "bit3 should be set after 8 prescaler ticks";
 
-    rtc.tick(16 * (48'000'000u / 256u));
+    rtc.tick(16 * (24'000'000u / 256u));
     EXPECT_EQ(0, rtc.rtcsub() & 0x08) << "bit3 should clear after 16 prescaler ticks";
 }
 
@@ -52,7 +52,7 @@ TEST_F(RtcFixture, PrescalerBit3_TogglesAtExpectedRate) {
 // Prescaler readable at 0x040153 (hi byte of halfword at 0x040152).
 // ---------------------------------------------------------------------------
 TEST_F(RtcFixture, Prescaler_ReadableViaBus) {
-    rtc.tick(48'000'000u);                  // 1 second of CPU cycles
+    rtc.tick(24'000'000u);                  // 1 second of CPU cycles
     uint16_t v = bus.read16(0x040152);
     uint8_t  hi = static_cast<uint8_t>(v >> 8);
     EXPECT_EQ(rtc.rtcsub(), hi) << "0x040153 must mirror prescaler register";
@@ -224,7 +224,7 @@ TEST_F(RtcFixture, Stop_FreezesVisibleTime) {
 
     uint16_t a = bus.read16(0x040154);
     // Wait briefly via cycle ticks; the visible time must not change.
-    rtc.tick(48'000'000u * 2);              // 2 simulated seconds
+    rtc.tick(24'000'000u * 2);              // 2 simulated seconds
     uint16_t b = bus.read16(0x040154);
     EXPECT_EQ(a, b) << "SEC/MIN must not advance while STOP=1";
 }

@@ -84,13 +84,46 @@ intc.raise(InterruptController::IrqSource::T16_CRA0);
 ```
 CLKCTL.TSx[2:0] → 分周比 2^(TSx+1)
 CLKCTL.TONx     → クロック有効/無効
-PWRCTL.CLKCHG   → 0=48MHz(OSC3直結), 1=24MHz(OSC3/2)
+PWRCTL.CLKDT[1:0] (bits 7:6) → CPU分周 ×1 / ×1/2 / ×1/4 / ×1/8
+PWRCTL.CLKCHG    (bit 2)     → 1=OSC3経路, 0=OSC1経路 (P/ECEでは常に1)
+P07 (Port 0 bit 7)           → OSC3実周波数 1=24MHz, 0=48MHz
 ```
 
-- `cpu_clock_hz()`: PWRCTL から CPU クロックを返す
+実効 CPU クロック:
+
+```
+OSC3 = (P07==1) ? 24 MHz : 48 MHz
+CPU  = OSC3 >> CLKDT
+```
+
+- `cpu_clock_hz()`: P07 と PWRCTL.CLKDT から CPU クロックを返す
+  （CLKCHG は無視 — P/ECE カーネルが常に 1 を維持する前提）
 - `t8_clock_hz(ch)`: CLKSEL_T8 + CLKCTL_T8_01/23 から T8 チャンネルのクロックを返す
 - `t16_clock_hz(ch, cksl)`: CLKCTL_T16_ch から T16 チャンネルのクロックを返す
-- `on_clock_change` コールバック: CLKCHG 変化時に通知（将来のフロントエンド用）
+- `on_clock_change` コールバック: CPU クロック変化時に通知（pace 再計算／タイマ wake point 更新）
+
+### P07 と「48MHz 倍速モード」— 罠
+
+**P07 の電源投入デフォルトは 1 (OSC3 = 24 MHz)**。P/ECE 回路図で P07/#SRDY1/#DMAEND3
+ピンは 47kΩ (R114) で VDDE にプルアップされており、リセット直後は入力として
+High にラッチされる。カーネルの `InitHard` がこのラッチ値を `a = bp[0x2d1];
+bp[0x2d1] = a & 0x80;` で読み出し、同じ値を出力として書き戻すことで P07=1 が
+そのまま保持される — **カーネルソースに「P07 に 1 を書く」明示的なコードは
+存在しない**。
+
+アプリは次の慣例で動く:
+
+- 通常: OSC3 = 24 MHz のまま、`pceCPUSetSpeed()` で CLKDT を ×1/×1/2 に切り替える
+- 「48MHz 倍速モード」: アプリが `bp[0x2d1] = 0x00` で P07=0 に落として
+  OSC3 = 48 MHz に上げる。終了時に `bp[0x2d1] = 0x80` を書いて P07=1 に戻す。
+
+エミュレータでの要件:
+
+- `PortCtrl::pport_[1]` の初期値を `0x80` にしておく
+  ([peripheral_portctrl.hpp](../src/soc/peripheral_portctrl.hpp))。これを 0 にすると
+  カーネルが P07=0 をラッチしてしまい、アプリの「終了時 P07=1 書き込み」が
+  OSC3 を 24 MHz に**落とす**動作になり、アプリ起動のたびに雪だるま式に遅くなる。
+- `ClockControl::p07_slow_` の初期値も `true` にする。pport_[1] と整合する。
 
 ---
 
@@ -307,7 +340,7 @@ K6 ポート (K6D レジスタ = 0x0402C4):
 
 | ポート | 信号 | 用途 |
 |--------|------|------|
-| P07 | OSC3クロック制御 | 0=48MHz, 1=24MHz → ClockControl 連携要 |
+| P07 | OSC3クロック制御 | 0=48MHz, 1=24MHz → ClockControl 連携要。**リセットデフォルト=1** (47kΩ で VDDE にプルアップ)。詳細は上記「P07 と 48MHz 倍速モード」節を参照 |
 | P15 | LCD SLCK | SIF3 SCLK3 |
 | P16 | LCD SID | SIF3 SOUT3 |
 | P20 | LCD CSB (OUT) | SRDY3 制御 (P32と直結) |

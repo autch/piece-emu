@@ -23,9 +23,12 @@ uint32_t ClockControl::clock_from_clkctl(uint8_t clkctl, bool use_b,
 
 uint32_t ClockControl::cpu_clock_hz() const
 {
-    // CLKCHG = bit 2 of pwrctl_
-    bool clkchg = (pwrctl_ >> 2) & 1;
-    return clkchg ? CPU_CLOCK_NORM : CPU_CLOCK_FAST;
+    // OSC3 is selected by the P07 pin (0 = 48 MHz, 1 = 24 MHz).
+    uint32_t osc3   = p07_slow_ ? CPU_CLOCK_NORM : CPU_CLOCK_FAST;
+    // CLKDT (PWRCTL bits 7:6): CPU = OSC3 / 2^CLKDT  (×1, ×1/2, ×1/4, ×1/8).
+    // CLKCHG (bit 2) is ignored: P/ECE always keeps it at 1 (OSC3 path).
+    uint8_t  clkdt  = (pwrctl_ >> 6) & 0x03u;
+    return osc3 >> clkdt;
 }
 
 uint32_t ClockControl::t16_clock_hz(int ch, int cksl) const
@@ -57,8 +60,10 @@ void ClockControl::write_single(uint32_t addr, uint8_t val)
     case 0x040180: {
         uint8_t old = pwrctl_;
         pwrctl_ = val;
-        // Notify on CLKCHG bit change (bit 2)
-        if (((old ^ val) & 0x04) && on_clock_change)
+        // Notify when any clock-affecting bit changes: CLKCHG (bit 2) or
+        // CLKDT (bits 7:6).  pceCPUSetSpeed() toggles CLKDT, so missing
+        // this change freezes the emulator at the pre-call frequency.
+        if (((old ^ val) & 0xC4u) && on_clock_change)
             on_clock_change(cpu_clock_hz());
         break;
     }
@@ -68,11 +73,12 @@ void ClockControl::write_single(uint32_t addr, uint8_t val)
 
 void ClockControl::set_p07(bool slow)
 {
-    // P07 controls OSC3 speed: 0=48 MHz, 1=24 MHz.
-    // Mirror to PWRCTL.CLKCHG (bit 2) to keep cpu_clock_hz() consistent.
-    uint8_t new_pwrctl = slow ? (pwrctl_ | 0x04u) : (pwrctl_ & ~0x04u);
-    if (new_pwrctl == pwrctl_) return;
-    pwrctl_ = new_pwrctl;
+    // P07 controls the external OSC3 oscillator: 0 → 48 MHz, 1 → 24 MHz.
+    // This is independent of PWRCTL.CLKCHG (a software-controlled divider
+    // bit).  Do NOT touch pwrctl_ here — the kernel writes PWRCTL itself
+    // and mirroring P07 into CLKCHG would clobber those writes.
+    if (p07_slow_ == slow) return;
+    p07_slow_ = slow;
     ++config_gen_;
     if (on_clock_change) on_clock_change(cpu_clock_hz());
 }
@@ -84,6 +90,7 @@ void ClockControl::reset()
     clkctl_t8_01_ = 0;
     clkctl_t8_23_ = 0;
     pwrctl_       = 0;
+    p07_slow_     = true;  // P/ECE power-on default: P07=1 → OSC3 = 24 MHz
     ++config_gen_; // invalidate cached per-timer cycles-per-count
     // on_clock_change is intentionally preserved; caller re-invokes it.
 }
@@ -150,7 +157,8 @@ void ClockControl::attach(Bus& bus)
         [this](uint32_t) -> uint16_t {
             return static_cast<uint16_t>(clkctl_t8_23_);
         },
-        [this](uint32_t, uint16_t v) {
+        [this](uint32_t addr, uint16_t v) {
+            if (addr & 1) return; // 0x04014F (AD clock) absorbed
             write_single(0x04014E, static_cast<uint8_t>(v));
         }
     });
@@ -160,7 +168,11 @@ void ClockControl::attach(Bus& bus)
         [this](uint32_t) -> uint16_t {
             return static_cast<uint16_t>(pwrctl_);
         },
-        [this](uint32_t, uint16_t v) {
+        [this](uint32_t addr, uint16_t v) {
+            // Byte write to odd addr 0x040181 targets PSCDT0, not PWRCTL.
+            // Without this guard, such a byte store would clobber pwrctl_
+            // with the PSCDT0 value and silently change CPU speed.
+            if (addr & 1) return; // PSCDT0 is absorbed (not modelled)
             write_single(0x040180, static_cast<uint8_t>(v));
         }
     });
