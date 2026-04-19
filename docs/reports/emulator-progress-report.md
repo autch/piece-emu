@@ -1,7 +1,7 @@
 # P/ECE エミュレータ実装進捗報告書
 
 **対象設計仕様書**: `PIECE_EMULATOR_DESIGN.md`  
-**報告日**: 2026-04-15  
+**報告日**: 2026-04-19  
 **実装場所**: `src/`  
 **ビルド方法**:
 ```bash
@@ -14,9 +14,9 @@ ninja -C build-src
 
 ## 概要
 
-P0（CPU コア・メモリ・ELF ローダ・セミホスティング・GDB RSP）、P1（タイマ・割り込み・ポートコントローラ・クロック制御・BCU・WDT・RTC）、P2-1〜P2-3（PFI ローダ・SIF3・HSDMA・S6B0741・SDL3 フロントエンド・ボタン入力）が実装済みで、P/ECE カーネル (`piece.pfi`) を起動してゲームをウィンドウ表示・操作できる状態にある。
+P0（CPU コア・メモリ・ELF ローダ・セミホスティング・GDB RSP）、P1（タイマ・割り込み・ポートコントローラ・クロック制御・BCU・WDT・RTC）、P2-1〜P2-4（PFI ローダ・SIF3・HSDMA・S6B0741・SDL3 フロントエンド・ボタン入力・PWM サウンド）が実装済みで、P/ECE カーネル (`piece.pfi`) を起動してゲームをウィンドウ表示・操作・サウンド再生できる状態にある。マルチスレッド構成 (main-SDL / CPU / GDB / audio) でフロントエンド応答性を確保。F12 PNG スクリーンショット、F5/Shift+F5 リセットも実装。
 
-158 本のユニットテストが全て PASS し、9 本のベアメタル CPU テストも全て PASS することを確認した。
+161 本のユニットテスト (piece_core_tests 107 + piece_soc_tests 54) が全て PASS し、9 本のベアメタル CPU テストも全て PASS することを確認した。
 
 ---
 
@@ -188,6 +188,30 @@ ISR クリア方式: RSTONLY=0 で直接書き込み (write-0-to-clear)、RSTONL
 - SDL3 キーイベント → K5D/K6D ビットマッピング（active-low）
 - `piece-emu-system --pfi piece.pfi` でカーネルブートからゲーム画面を表示
 - `--gdb-port N` で GDB RSP 非同期モードを起動し、SDL ウィンドウを維持しながらデバッグ可能
+- F5 / Shift+F5 でホット / コールドスタート、F12 で PNG スクリーンショット保存
+
+### ✅ マルチスレッド構成 (piece-emu-system)
+
+`src/system/cpu_runner.cpp`、`src/system/piece_peripherals.cpp`、`src/system/lcd_framebuf.hpp`。
+
+- `piece-sdl` (メインスレッド): SDL3 イベントポーリング + `LcdRenderer::render()`
+- `piece-cpu` (`std::thread`): CPU ステップ + ペリフェラル tick + HSDMA Ch0 完了時に `LcdFrameBuf::push()`
+- `piece-gdb` (オプション): GDB RSP 非同期サーバ
+- SDL オーディオスレッド: `AudioOutput::audio_cb()` が `Sound::pop()` で SPSC リングから取得
+- 共有状態: `LcdFrameBuf` (mutex)、`std::atomic<bool> quit_flag`、`std::atomic<uint16_t> shared_buttons`、Sound のリングバッファ
+
+Windows ではメインスレッドスタックサイズを `/STACK:8388608` (8 MB) に設定（D3D11/D3D12 作成時のスタック消費対策）。
+
+### ✅ PWM サウンド (Sound + AudioOutput)
+
+`src/soc/peripheral_sound.cpp`、`src/host/audio_output.cpp`、`src/host/audio_log.cpp`。
+
+- HSDMA Ch1 EN 0→1 で PWM サンプルを SADR から一括読み出し、SPSC リングバッファに格納 (4096 サンプル、128ms @ 32kHz)
+- Ch1 完了 IRQ (vec 23) を `cnt*(cpu_hz/32000)` サイクル後にスケジュール配信。再入回避のため IL=1 で配信し INTC の level_override で IL 降下時に発火
+- SDL3 `SDL_AudioStream` コールバックがリングから int16 を pull、ホストレートへのリサンプリングは SDL3 が担当
+- `--audio-trace` で PULL / PUSH イベントを stderr にログ出力
+
+**ユニットテスト**: 3 テスト PASS (リングバッファ挙動、サンプル生成、DMA 同期)
 
 ---
 
@@ -232,28 +256,32 @@ ISR クリア方式: RSTONLY=0 で直接書き込み (write-0-to-clear)、RSTONL
 
 ## テスト結果
 
-### ユニットテスト（158テスト）
+### ユニットテスト（161テスト）
+
+バイナリはライブラリ境界で 2 本に分割（Windows の gtest_discover_tests スタック
+オーバーフロー回避のため）。両バイナリ合計 161 テスト / 13 スイートが PASS。
 
 ```
-[==========] 158 tests from 13 test suites ran.
-[  PASSED  ] 158 tests.
+piece_core_tests : 107 tests / 6 suites
+piece_soc_tests  :  54 tests / 7 suites
+                 --- 161 total ---
 ```
 
-| テストスイート | テスト数 | 内容 |
-|-------------|--------|------|
-| ExtImmFixture | 16 | EXT即値拡張 |
-| PsrFlags | 18 | PSRフラグ演算 |
-| ShiftDecode | 9 | シフトデコード |
-| DisasmFixture | 15 | 逆アセンブラ |
-| BcuFixture | 21 | BCUメモリマップ |
-| CpuInsnFixture | 28 | CPU命令実行 |
-| IntcFixture | 8 | 割り込みコントローラ |
-| T8Fixture | 7 | 8bitタイマ |
-| T16Fixture | 10 | 16bitタイマ |
-| PortCtrlFixture | 10 | ポートコントローラ |
-| RtcFixture | 7 | クロックタイマ (RTC) |
-| Sif3Fixture | 4 | シリアルI/F3 |
-| HsdmaFixture | 5 | 高速DMA |
+| テストスイート | バイナリ | テスト数 | 内容 |
+|-------------|---------|--------|------|
+| ExtImmFixture | core | 16 | EXT即値拡張 |
+| PsrFlags | core | 18 | PSRフラグ演算 |
+| ShiftDecode | core | 9 | シフトデコード |
+| DisasmFixture | core | 15 | 逆アセンブラ |
+| BcuFixture | core | 21 | BCUメモリマップ |
+| CpuInsnFixture | core | 28 | CPU命令実行 |
+| IntcFixture | soc | 8 | 割り込みコントローラ |
+| T8Fixture | soc | 7 | 8bitタイマ |
+| T16Fixture | soc | 10 | 16bitタイマ |
+| PortCtrlFixture | soc | 10 | ポートコントローラ |
+| RtcFixture | soc | 7 | クロックタイマ (RTC) |
+| Sif3Fixture | soc | 9 | シリアルI/F3 + HSDMA インライン DMA |
+| SoundFixture | soc | 3 | PWM サウンド (HSDMA Ch1 → リングバッファ) |
 
 ### ベアメタル CPU テスト（9テスト）
 
@@ -277,7 +305,6 @@ ISR クリア方式: RSTONLY=0 で直接書き込み (write-0-to-clear)、RSTONL
 
 | 優先度 | コンポーネント | 状況 |
 |--------|-------------|------|
-| **P2-4** | PWM サウンド (HSDMA Ch1 → SDL3 Audio) | 未実装（`on_ch1_start` フックは用意済み） |
 | **P2-5** | Flash 書き込み（SST39VF400A コマンドシーケンス）| 未実装（読み取り専用） |
 | **P2** | A/Dコンバータ スタブ (0x040240–0x040245) | 未実装（カーネルが参照する場合に追加） |
 | **P2** | IDMA (0x048200–0x048207) | 未実装（P/ECE BIOS 未使用） |
@@ -293,7 +320,7 @@ ISR クリア方式: RSTONLY=0 で直接書き込み (write-0-to-clear)、RSTONL
 
 | 設計方針 | 状況 |
 |----------|------|
-| **§2.1 シングルスレッド** | ✅ （GDB RSP 非同期モードは別スレッドだが CPU ステップは常にメインループ） |
+| **§2.1 シングルスレッド** | ⚠️ `piece-emu` (headless) はシングルスレッド。`piece-emu-system` は SDL/CPU/GDB/Audio の 4 スレッド構成（SDL レンダリングをメインスレッドに固定するため）。共有状態はすべて mutex / atomic / SPSC リング経由 |
 | **§2.2 逆アセンブラ蓄積→合成方式** | ✅ |
 | **§2.3 即値符号規則（ext は signedness を変更しない）** | ✅ ext_imm/ext_simm で分離実装 |
 | **§2.4 ディレイドブランチ** | ✅ in_delay_slot フラグで実装 |

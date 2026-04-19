@@ -2,12 +2,12 @@
 
 実機なら黙って流す怪しい動作を積極的に検出する、アクアプラス P/ECE（EPSON S1C33209 SoC）向けの diagnostic エミュレータです。
 GDB RSP とセミホスティングにより、コンパイラ開発のデバッグ基盤として機能します。
-P2-2 フェーズ実装済み：SDL3 フルシステムフロントエンド（LCD 表示・ボタン入力）、CPU/SDL スレッド分離、非同期 GDB RSP 対応、O(1) タイマ解析によるホスト CPU 使用率 ~50% を達成。
+P2-4 フェーズ実装済み：SDL3 フルシステムフロントエンド（LCD 表示・ボタン入力・PWM サウンド出力）、CPU/SDL/GDB/Audio のマルチスレッド構成、非同期 GDB RSP 対応、O(1) タイマ解析によるホスト CPU 使用率 ~50% を達成。**未実装デバイスはあるものの（USB / 赤外線 / MMC / Flash 書き込み / ADC / IDMA）、`piece.pfi` からカーネルブートしてゲームが起動・操作・発音する状態に到達しています。**
 
 A diagnostic S1C33209 emulator for the Aquaplus P/ECE handheld.
 Catches dubious-but-silently-ignored patterns that real hardware would let slip.
 GDB RSP + semihosting for compiler development.
-P2-2 complete: SDL3 full-system frontend with LCD display and button input; CPU/SDL thread separation; async GDB RSP (LLDB-compatible); O(1) timer analytics achieving ~50% host CPU usage.
+P2-4 complete: SDL3 full-system frontend with LCD display, button input, and PWM sound output; four-thread architecture (SDL/CPU/GDB/audio); async GDB RSP (LLDB-compatible); O(1) timer analytics achieving ~50% host CPU usage. **Not every peripheral is emulated (USB, IrDA, MMC, flash write, ADC, IDMA are stubs or absent), but games boot from `piece.pfi`, display on the LCD, accept input, and produce audio.**
 
 ---
 
@@ -19,7 +19,7 @@ P2-2 complete: SDL3 full-system frontend with LCD display and button input; CPU/
 | ターゲットデバイス | Aquaplus P/ECE |
 | 言語 | C++20 |
 | ビルドシステム | CMake + Ninja |
-| ステータス | **P2-2 フェーズ実装済み** — 全命令・周辺デバイス・GDB RSP（同期/非同期）・セミホスティング・HLT/SLEEP 高速スキップ・PFI ブート・SDL3 LCD 表示・ボタン入力・LLDB MCP 対応・CPU/SDL スレッド分離・O(1) タイマ解析（ホスト CPU ~50%） |
+| ステータス | **P2-4 フェーズ実装済み** — 全命令・主要周辺デバイス・GDB RSP（同期/非同期）・セミホスティング・HLT/SLEEP 高速スキップ・PFI ブート・SDL3 LCD 表示・ボタン入力・PWM サウンド出力・LLDB MCP 対応・4 スレッド構成（SDL/CPU/GDB/Audio）・O(1) タイマ解析（ホスト CPU ~50%）。実機 PFI からゲームを起動・操作・発音可能 |
 
 ### 設計方針 / Design Philosophy
 
@@ -61,7 +61,8 @@ All ISA classes (0–6) implemented. Includes disassembler, PSR flags, EXT immed
 | WDT（ウォッチドッグ）| 0x040170 | NMI 発火（1 ms 周期）、ClockTicks インクリメント経路 |
 | RTC（計時タイマ）| 0x040150 | 1 Hz クロックフラグ（rRTCSEL bit3）トグル、GetSysClock() 対応 |
 | SIF3（シリアル I/F）| 0x0401F4 | TXD/STATUS/CTL レジスタ、HSDMA Ch0 インライン DMA |
-| HSDMA（高速 DMA）| 0x048220 | 4 チャネル、Ch0 = LCD 転送（SIF3 連動）、Ch1 = サウンド転送コールバック |
+| HSDMA（高速 DMA）| 0x048220 | 4 チャネル、Ch0 = LCD 転送（SIF3 連動）、Ch1 = PWM サンプル一括読み出し |
+| Sound（PWM 音声）| 0x048220 Ch1 経由 | HSDMA Ch1 EN 0→1 で PWM サンプルを SPSC リングに格納、Ch1 完了 IRQ (vec 23) を `cnt*(cpu_hz/32000)` サイクル後に配信（IL=1、再入回避） |
 | S6B0741 LCD | SIF3 経由 | コマンド/データデコード、128×88 VRAM、4 階調ピクセル変換 |
 
 ### HLT/SLEEP 高速スキップ / Fast-forward on HLT ✅
@@ -123,6 +124,7 @@ piece-emu/
 │   │   ├── peripheral_rtc.cpp/hpp  計時タイマ（RTC）/ Real-time clock
 │   │   ├── peripheral_sif3.cpp/hpp SIF3 シリアル I/F（LCD 転送、HSDMA 連動）
 │   │   ├── peripheral_hsdma.cpp/hpp HSDMA 高速 DMA（4 チャネル）
+│   │   ├── peripheral_sound.cpp/hpp PWM サウンド（HSDMA Ch1 → SPSC リング）/ PWM audio
 │   │   └── CMakeLists.txt
 │   ├── board/                      libpiece_board.a — 外付けデバイス / Board external devices
 │   │   ├── s6b0741.cpp/hpp         Samsung S6B0741 LCD コントローラ / LCD controller
@@ -136,7 +138,16 @@ piece-emu/
 │   │   └── CMakeLists.txt
 │   ├── host/                       libpiece_host.a — SDL3 フロントエンド / SDL3 frontend
 │   │   ├── lcd_renderer.cpp/hpp    S6B0741 VRAM → SDL3 テクスチャ / LCD renderer
+│   │   ├── audio_output.cpp/hpp    SDL3 オーディオシンク / SDL3 audio sink
+│   │   ├── audio_log.cpp/hpp       `--audio-trace` 診断ログ / Audio diagnostic log
+│   │   ├── screenshot.cpp/hpp      F12 PNG スクリーンショット / PNG screenshot
 │   │   └── CMakeLists.txt
+│   ├── system/                     piece-emu-system 内部モジュール / system binary internals
+│   │   ├── cpu_runner.cpp/hpp      CPU 実行スレッド / CPU thread
+│   │   ├── piece_peripherals.cpp/hpp 全周辺集約 + attach/reset / Peripheral aggregate
+│   │   ├── lcd_framebuf.hpp        CPU→SDL 共有フレームバッファ / Shared frame buffer
+│   │   ├── button_input.cpp/hpp    SDL3 キー→K5/K6 マップ / Key→button mapping
+│   │   └── cli_config.cpp/hpp      CLI11 オプション解析 / CLI option parser
 │   ├── tools/                      ホストユーティリティ（C）/ Host utilities (C)
 │   │   ├── mkpfi.c                 PFI イメージ作成 / Create PFI image
 │   │   ├── pfar.c                  PFFS アーカイバ / PFFS archiver
@@ -147,7 +158,7 @@ piece-emu/
 │   ├── CMakeLists.txt
 │   ├── vcpkg.json                  依存ライブラリ（GTest, CLI11, SDL3, ImGui; Windows では libusb も）/ Dependencies
 │   └── tests/
-│       ├── unit/                   C++ ユニットテスト（GTest）158 テスト
+│       ├── unit/                   C++ ユニットテスト（GTest）161 テスト（core 107 + soc 54）
 │       │   ├── test_cpu_instructions.cpp
 │       │   ├── test_disasm.cpp
 │       │   ├── test_ext_imm.cpp
@@ -159,7 +170,8 @@ piece-emu/
 │       │   ├── test_peripheral_t16.cpp
 │       │   ├── test_peripheral_portctrl.cpp
 │       │   ├── test_peripheral_rtc.cpp
-│       │   └── test_peripheral_sif3.cpp
+│       │   ├── test_peripheral_sif3.cpp    (SIF3 + HSDMA インライン DMA)
+│       │   └── test_peripheral_sound.cpp   (PWM サウンドのリング・IRQ 配信)
 │       └── bare_metal/             S1C33 ベアメタルテスト（LLVM ツールチェーン使用）
 │           ├── semihosting.h       セミホスティングヘルパ（`semi_*` 関数群）
 │           ├── piece_emu_debug.h   デバッグポートヘルパ（`EMU_*` マクロ）
@@ -422,9 +434,9 @@ SUBSYSTEM=="usb", ATTR{idVendor}=="0e19", ATTR{idProduct}=="1000", MODE="0666"
 ninja -C build-src test
 ```
 
-158 テストが通過します。CPU 命令・逆アセンブラ・PSR フラグ・BCU・INTC・T8・T16・PortCtrl・RTC・SIF3/HSDMA を網羅。
+161 テストが通過します（`piece_core_tests` 107 + `piece_soc_tests` 54）。CPU 命令・逆アセンブラ・PSR フラグ・BCU・INTC・T8・T16・PortCtrl・RTC・SIF3+HSDMA・PWM Sound を網羅。
 
-158 tests pass. Covers CPU instructions, disassembler, PSR flags, BCU, INTC, T8, T16, PortCtrl, RTC, SIF3, and HSDMA.
+161 tests pass (`piece_core_tests` 107 + `piece_soc_tests` 54). Covers CPU instructions, disassembler, PSR flags, BCU, INTC, T8, T16, PortCtrl, RTC, SIF3+HSDMA, and PWM Sound.
 
 ### ベアメタルテスト / Bare-metal Tests
 

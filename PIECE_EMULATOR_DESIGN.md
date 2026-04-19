@@ -8,7 +8,7 @@
 
 本エミュレータの主目的は、P/ECE 向け LLVM/Clang バックエンドの開発を支援するデバッグ環境の提供である。実機は量産機でありデバッグ機能を持たず、コンパイラのコード生成バグの調査にはエミュレータ上での逆アセンブル・ステップ実行・ブレークポイントが不可欠である。
 
-最終的には P/EMU のようにゲームを遊べるエミュレータに発展させたいが、当面はデバッグ支援に必要な機能から実装していく。
+P2-4 完了時点で副次目標にも到達している: `piece.pfi` からカーネルをブートし、LCD 表示・ボタン入力・PWM サウンド出力を伴ってゲームを遊べる状態にある。USB / 赤外線 / MMC / Flash 書き込み / ADC / IDMA は未実装だが、P/EMU と同様に市販ゲームを起動・操作・発音できる。
 
 ### 設計原則
 
@@ -63,13 +63,15 @@ $ lldb
 (lldb) c
 ```
 
-#### システムモード（P2-2 実装済み）
+#### システムモード（P2-4 実装済み）
 
-ゲーム実行用。カーネル込みのフルシステムエミュレーション。
+ゲーム実行用。カーネル込みのフルシステムエミュレーション。**実機 PFI からゲームを起動・操作・発音できる。**
 
-- **P2-1 実装済み**: PFI イメージからフラッシュ全体をロードし、リセットベクタからブート。カーネルが AppStart まで到達することを確認済み。
+- **P2-1 実装済み**: PFI イメージからフラッシュ全体をロードし、リセットベクタからブート。カーネルが AppStart まで到達。
 - **P2-2 実装済み**: SDL3 フルシステムフロントエンド（`piece-emu-system`）。LCD 表示（S6B0741）、ボタン入力（K5/K6）、非同期 GDB RSP 対応。
-- **P2-3 以降未実装**: サウンド出力（PWM + SDL3 Audio）、Flash 書き込み
+- **P2-3 実装済み**: マルチスレッド構成（SDL メイン / CPU / GDB / SDL Audio）。F5/Shift+F5 リセット、F12 PNG スクリーンショット。
+- **P2-4 実装済み**: PWM サウンド出力（HSDMA Ch1 → SPSC リング → `SDL_AudioStream`、32 kHz / int16）。
+- **P2-5 以降未実装**: Flash 書き込み（SST39VF400A コマンド）、ADC スタブ、IDMA、USB (PDIUSBD12)、赤外線通信、MMC/SD。
 
 ```
 # SDL3 フルシステムフロントエンド
@@ -99,7 +101,10 @@ libpiece_board.a (src/board/) → piece_soc
 └── (将来: NAND Flash, PDIUSBD12 USB)
 
 libpiece_host.a  (src/host/) → piece_board, SDL3
-└── LcdRenderer — S6B0741 VRAM → SDL3 テクスチャ
+├── LcdRenderer  — S6B0741 VRAM → SDL3 テクスチャ
+├── AudioOutput  — SDL_AudioStream コールバック（Sound リングから pull）
+├── AudioLog     — `--audio-trace` 診断ログ
+└── Screenshot   — F12 PNG 保存（stb_image_write）
 
 libpiece_debug.a (src/debug/) → piece_core
 ├── ELFローダ
@@ -114,8 +119,13 @@ piece-emu          (ベアメタルモード実行バイナリ)
 
 piece-emu-system   (システムモード実行バイナリ)
 ├── piece_host + piece_debug + piece_board + piece_soc + piece_core
-├── SDL3 GUI フロントエンド（LCD 表示・ボタン入力・60fps）
-├── 非同期 GDB RSP（--gdb-port）— SDL main loop と2スレッド協調
+├── SDL3 GUI フロントエンド（LCD 表示・ボタン入力・PWM サウンド・60fps）
+├── 4 スレッド構成:
+│   ├── piece-sdl (main)  — SDL3 イベント + LcdRenderer::render()
+│   ├── piece-cpu         — CpuRunner::run() = CPU ステップ + 周辺 tick
+│   ├── piece-gdb (opt.)  — 非同期 GDB RSP（--gdb-port）
+│   └── SDL audio thread  — AudioOutput::audio_cb() → Sound::pop()
+├── 共有状態: LcdFrameBuf (mutex) / quit_flag (atomic) / shared_buttons (atomic) / Sound SPSC リング
 └── 外部依存: SDL3
 ```
 
@@ -1108,7 +1118,8 @@ MAME の設計で特に倣うべきは、CPUデバイスとメモリ空間の抽
 | **P2-2** ✅ | LCDコントローラ | S6B0741 SPI コマンド解釈、128×88 4階調表示（`src/board/s6b0741`） |
 | **P2-2** ✅ | SDL3 フロントエンド | `piece-emu-system`：LCD 表示・ボタン入力・60fps・非同期 GDB RSP |
 | **P2-2** ✅ | ボタン入力 | SDL3 キーイベント → K5D/K6D マッピング（piece-emu-system 内） |
-| **P2-4** | PWMサウンド | HSDMA Ch1 + SDL3 オーディオ出力 |
+| **P2-3** ✅ | マルチスレッド構成 | SDL メイン / CPU / GDB / SDL Audio の 4 スレッド。共有状態は mutex / atomic / SPSC リング |
+| **P2-4** ✅ | PWMサウンド | HSDMA Ch1 EN 0→1 で PWM サンプル一括読み出し → SPSC リング → `SDL_AudioStream`（32 kHz / int16）。Ch1 完了 IRQ は `cnt*(cpu_hz/32000)` サイクル後に配信、IL=1 で再入回避 |
 | **P2-5** | Flash書き込み | SST39VF400A コマンドシーケンス、PFI書き戻し |
 | **P3** | USB (PDIUSBD12) | 将来拡張 |
 | **P3** | 赤外線通信 | 将来拡張 |
