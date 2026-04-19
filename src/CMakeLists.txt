@@ -15,7 +15,11 @@ endif()
 
 # Keep frame pointers in RelWithDebInfo so that profilers (perf, Instruments)
 # can unwind call stacks through hot emulation loops without DWARF unwinding.
-add_compile_options($<$<CONFIG:RelWithDebInfo>:-fno-omit-frame-pointer>)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options($<$<CONFIG:RelWithDebInfo>:-fno-omit-frame-pointer>)
+else()
+    # MSVC doesn't omit frame pointers by default, so no need for a special flag.
+endif()
 
 # Enable LTO for Release/RelWithDebInfo builds if the toolchain supports it.
 # This allows bus.fetch16(), cpu.step(), and instruction handlers to be inlined
