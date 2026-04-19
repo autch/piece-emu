@@ -7,30 +7,37 @@ class ClockControl;
 class InterruptController;
 
 // ============================================================================
-// ClockTimer — S1C33209 clock timer (RTC) stub
+// ClockTimer — S1C33209 clock timer (RTC)
 //
-// Register map (byte addresses 0x040151..0x04015B, 11 bytes):
-//   0x040151  rRTCSTOP  stop control
-//   0x040152  rRTCCR    clock correction
-//   0x040153  rRTCSEL   status / clock select:
-//               bit 5 = OSC3 running (always 1 in emulation)
-//               bit 3 = 1 Hz clock edge flag (toggled every half-second)
-//   0x040154  rRTCIEN   interrupt enable
-//   0x040155  rRTCSTA   interrupt status
-//   0x040156  rSEC      seconds  (BCD)
-//   0x040157  rMIN      minutes  (BCD)
-//   0x040158  rHOUR     hours    (BCD)
-//   0x040159  rDAY      days     (BCD, lower byte)
-//   0x04015A  rMON      months   (BCD)
-//   0x04015B  rYEAR     years    (BCD, 2-digit)
+// Register map (byte addresses, IO base = 0x040000):
+//   0x040151  rRTCSTOP   stop control (bit1=stop, bit0=run; writing 0x01
+//                        starts the counter and resets sec/prescaler to 0)
+//   0x040152  rRTCALMC   alarm control / mode
+//   0x040153  rRTCSUB    8-bit free-running prescaler (256 Hz). The kernel
+//                        reads it to derive 1/100s precision and to detect
+//                        the 1 Hz edge (bit3 toggles at 32 Hz).
+//   0x040154  rRTCSEC    seconds  (binary, 0..59)
+//   0x040155  rRTCMIN    minutes  (binary, 0..59)
+//   0x040156  rRTCHOUR   hours    (binary, 0..23)
+//   0x040157  rRTCDAYL   days low byte  (16-bit total, days since 2000-01-01)
+//   0x040158  rRTCDAYH   days high byte
+//   0x040159  rRTCALMM   alarm minute
+//   0x04015A  rRTCALMH   alarm hour
+//   0x04015B  rRTCALMD   alarm day (low 5 bits)
 //
-// Emulation:
-//   Registers are bus-mapped as halfwords starting at 0x040150 (dummy lo byte).
-//   rTCD (0x040153) bit 3 toggles every cpu_clock_hz()/64 cycles, simulating
-//   the 32.768 kHz crystal divided by 64 then by 8 (= 64 Hz toggle rate,
-//   half-period = 375,000 cycles at 24 MHz).  This drives GetSysClock() to
-//   measure ≈11720 T16 counts per half-period — matching real hardware at 24 MHz.
-//   Alarm interrupt generation (CLK_TIMER, trap 65) is not implemented (P2).
+// Time-source emulation:
+//   Reads of SEC/MIN/HOUR/DAY return the *host PC* wall-clock time, optionally
+//   offset by a per-instance delta. When the guest writes the date/time fields
+//   and then asserts STOP=run (0x01), the offset is recomputed so that future
+//   reads continue to advance from the just-written value.
+//
+//   Base epoch is 2000-01-01 00:00:00 (matches pceTime SDK convention).
+//
+//   The 8-bit prescaler at 0x040153 is driven from CPU cycles so that
+//   GetSysClock() (which polls bit3) calibrates correctly regardless of host
+//   clock skew.
+//
+// Alarm functionality is not implemented; alarm registers are storage-only.
 // ============================================================================
 class ClockTimer : public ITickable {
 public:
@@ -38,15 +45,16 @@ public:
 
     void tick(uint64_t cpu_cycles) override;
 
-    // Returns the next cycle at which the 1 Hz flag will toggle.
-    uint64_t next_wake_cycle() const override { return next_half_cycle_; }
+    // Returns the next cycle at which the prescaler advances.
+    uint64_t next_wake_cycle() const override { return next_prescaler_cycle_; }
 
     // Reset register + scheduling state; preserves attach-bound pointers.
     void reset();
 
     // Direct register access (for unit tests)
-    uint8_t rtcsel() const { return rtcsel_; }
-    uint8_t rtcsta() const { return rtcsta_; }
+    uint8_t rtcsub()  const { return prescaler_; }
+    uint8_t rtcstop() const { return rtcstop_; }
+    int64_t offset_seconds() const { return offset_sec_; }
 
 private:
     static constexpr uint32_t RTC_BASE = 0x040150; // halfword base (dummy lo)
@@ -54,32 +62,42 @@ private:
     const ClockControl*  clk_  = nullptr;
     InterruptController* intc_ = nullptr;
 
-    uint8_t rtcstop_ = 0;
-    uint8_t rtccr_   = 0;
-    // bit5=1 (OSC3 on), bit3=0 initially (1 Hz flag low)
-    uint8_t rtcsel_  = 0x20;
-    uint8_t rtcien_  = 0;
-    uint8_t rtcsta_  = 0;
-    uint8_t sec_  = 0;
-    uint8_t min_  = 0;
-    uint8_t hour_ = 0;
-    uint8_t day_  = 1;
-    uint8_t mon_  = 1;
-    uint8_t year_ = 0;
+    // Control / alarm storage
+    uint8_t rtcstop_ = 0x01; // running by default
+    uint8_t alarmc_  = 0;
+    uint8_t alarm_mi_ = 0;
+    uint8_t alarm_hh_ = 0;
+    uint8_t alarm_d_  = 0;
 
-    uint64_t next_half_cycle_ = 0; // CPU cycle of next 1 Hz flag toggle
-    bool     clk_phase_       = false; // current half-cycle phase
+    // Prescaler (free-running 8-bit at 256 Hz)
+    uint8_t  prescaler_           = 0;
+    uint64_t next_prescaler_cycle_ = 0;
 
-    // Returns the CPU cycle count for one half-period of rTCD bit3.
-    //
-    // The 32.768 kHz crystal feeds the CT sub-second counter at /64 = 512 Hz.
-    // rTCD bit3 toggles every 8 increments → toggle rate = 512/8 = 64 Hz,
-    // so one half-period = cpu_hz / 64.  At 24 MHz this gives 375,000 cycles.
-    // With T16 Ch0 at 750 kHz (/32 prescaler), GetSysClock measures
-    // a = 750,000 × (375,000/24,000,000) ≈ 11,719 ≈ 11720, matching hardware.
-    uint64_t half_period(uint32_t cpu_hz) const
+    // Pending "set" values latched between STOP and RUN.
+    // Initialised to "now" so reads work even before any write happens.
+    uint8_t  set_mi_      = 0;
+    uint8_t  set_hh_      = 0;
+    uint8_t  set_day_lo_  = 0;
+    uint8_t  set_day_hi_  = 0;
+
+    // Offset in seconds: emulated_time = host_now + offset_sec_
+    // (both expressed as seconds since 2000-01-01 00:00:00)
+    int64_t offset_sec_ = 0;
+
+    // Frozen time-since-2000 while STOPped (rtcstop_ bit1 set).
+    bool    frozen_       = false;
+    int64_t frozen_sec_   = 0;
+
+    // ---- helpers ----------------------------------------------------------
+    static int64_t host_seconds_since_2000();
+    int64_t current_seconds_since_2000() const;
+    void    apply_set_to_offset();
+
+    uint64_t prescaler_period(uint32_t cpu_hz) const
     {
-        if (cpu_hz == 0) return 24'000'000u / 64u;
-        return static_cast<uint64_t>(cpu_hz) / 64u;
+        // 8-bit prescaler at 256 Hz → tick interval = cpu_hz / 256.
+        // bit3 toggles every 8 ticks → 32 Hz, half-period = cpu_hz / 64.
+        if (cpu_hz == 0) return 24'000'000u / 256u;
+        return static_cast<uint64_t>(cpu_hz) / 256u;
     }
 };
