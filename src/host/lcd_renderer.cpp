@@ -1,6 +1,7 @@
 #include "lcd_renderer.hpp"
 #include <SDL3/SDL.h>
 #include <cstdio>
+#include <cstring>
 
 // 2bpp palette: index 0=white, 1=light gray, 2=dark gray, 3=black
 // Format: ARGB8888
@@ -16,7 +17,7 @@ LcdRenderer::~LcdRenderer()
     destroy();
 }
 
-bool LcdRenderer::init(int scale)
+bool LcdRenderer::init(int scale, const char* scale_mode)
 {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
@@ -53,6 +54,22 @@ bool LcdRenderer::init(int scale)
     if (!texture_) {
         std::fprintf(stderr, "SDL_CreateTexture failed: %s\n", SDL_GetError());
         return false;
+    }
+
+    SDL_ScaleMode sm = SDL_SCALEMODE_NEAREST;
+    const char* sm_name = scale_mode ? scale_mode : "nearest";
+    if (std::strcmp(sm_name, "linear") == 0) {
+        sm = SDL_SCALEMODE_LINEAR;
+    } else if (std::strcmp(sm_name, "pixelart") == 0) {
+#if SDL_VERSION_ATLEAST(3, 4, 0)
+        sm = SDL_SCALEMODE_PIXELART;
+#else
+        std::fprintf(stderr,
+            "scale-mode=pixelart requires SDL >= 3.4.0; falling back to nearest\n");
+#endif
+    }
+    if (!SDL_SetTextureScaleMode(texture_, sm)) {
+        std::fprintf(stderr, "SDL_SetTextureScaleMode failed: %s\n", SDL_GetError());
     }
 
     render_buf_.resize(88 * 128);

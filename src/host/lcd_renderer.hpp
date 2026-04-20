@@ -27,8 +27,10 @@ public:
     ~LcdRenderer();
 
     // Create SDL3 window and renderer.  scale multiplies the 128×88 pixel
-    // resolution (default 4 → 512×352 window).  Returns true on success.
-    bool init(int scale = 4);
+    // resolution (default 4 → 512×352 window).  scale_mode selects the
+    // texture filter: "nearest" (default), "linear", or "pixelart"
+    // (SDL 3.4.0+).  Returns true on success.
+    bool init(int scale = 4, const char* scale_mode = "nearest");
 
     // Blit pixels[88][128] (2bpp) to the SDL3 window.
     void render(const uint8_t pixels[88][128]);

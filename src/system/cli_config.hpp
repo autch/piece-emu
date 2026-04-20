@@ -20,6 +20,11 @@ struct Config {
     bool                     sram_size_explicit  = false;
     bool                     flash_size_explicit = false;
     int                      scale      = 4;
+    // Texture scaling filter for the 128x88 LCD texture.
+    // "nearest"  - SDL_SCALEMODE_NEAREST (default, pixel-sharp)
+    // "linear"   - SDL_SCALEMODE_LINEAR (bilinear)
+    // "pixelart" - SDL_SCALEMODE_PIXELART (SDL 3.4.0+, sharp with anti-alias)
+    std::string              scale_mode = "nearest";
     uint16_t                 gdb_port   = 0;
     bool                     gdb_debug  = false;
     bool                     no_audio   = false;

@@ -9,7 +9,7 @@ Config Config::parse(int argc, char** argv)
     CLI::App app{"P/ECE system emulator (SDL3 display)"};
     argv = app.ensure_utf8(argv);
 
-    app.add_option("--pfi", cfg.pfi_path, "P/ECE Flash Image (.pfi) to load")
+    app.add_option("pfi", cfg.pfi_path, "P/ECE Flash Image (.pfi) to load")
         ->required()
         ->check(CLI::ExistingFile);
     app.add_option("--max-cycles", cfg.max_cycles,
@@ -19,6 +19,9 @@ Config Config::parse(int argc, char** argv)
     app.add_option("--scale", cfg.scale,
         "Display scale factor (default: 4 → 512×352)")
         ->check(CLI::Range(1, 8));
+    app.add_option("--scale-mode", cfg.scale_mode,
+        "Texture scaling filter: nearest (default), linear, pixelart")
+        ->check(CLI::IsMember({"nearest", "linear", "pixelart"}));
     auto* opt_sram  = app.add_option("--sram-size",  cfg.sram_size,
         "SRAM size in bytes (default: from PFI SYSTEMINFO)");
     auto* opt_flash = app.add_option("--flash-size", cfg.flash_size,

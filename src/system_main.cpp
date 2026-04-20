@@ -157,7 +157,7 @@ int main(int argc, char** argv)
 
         // SDL3 renderer (must stay on this thread for SDL_RenderPresent)
         auto renderer = std::make_unique<LcdRenderer>();
-        if (!renderer->init(cfg.scale)) {
+        if (!renderer->init(cfg.scale, cfg.scale_mode.c_str())) {
             std::fprintf(stderr, "Failed to initialise SDL3 renderer\n");
             return 1;
         }
