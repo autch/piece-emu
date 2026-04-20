@@ -24,10 +24,11 @@ protected:
         intc.attach(bus, [this](int no, int) { last_irq = no; });
         t8.attach(bus, intc, clk);
 
-        // CLKCTL_T8_01 = 0x08: TONA=1, TSA=0 → timer clock = 48 MHz / 2 = 24 MHz.
-        // CLKCTL_T8_01 is the hi byte of the halfword at 0x04014C.
-        // → cycles_per_count = ceil(48 MHz / 24 MHz) = 2
-        bus.write16(0x04014C, 0x0800);
+        // Configure cpc = 2:
+        //   Default OSC3 = 24 MHz (P07=1), CLKDT=0 → CPU = 24 MHz
+        //   CLKCTL_T8_01 = 0x09 (TONA=1, TSA=1) → T8 = OSC3/2 = 12 MHz
+        //   cpc = ceil(24 MHz / 12 MHz) = 2
+        bus.write16(0x04014C, 0x0900); // CLKCTL_T8_01: TONA=1 TSA=1
     }
 
     // Set RLD then CTL so that PSET (if included) uses the new RLD value.

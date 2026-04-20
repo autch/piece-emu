@@ -115,10 +115,14 @@ void ClockTimer::tick(uint64_t cpu_cycles)
     uint64_t per    = prescaler_period(cpu_hz);
     if (per == 0) per = 1;
 
-    while (cpu_cycles >= next_prescaler_cycle_) {
-        next_prescaler_cycle_ += per;
-        ++prescaler_; // 8-bit wrap is intentional (free-running counter)
-    }
+    // Analytical O(1): compute how many prescaler ticks fit in the window.
+    // Halt-time-jumps can cover many real-time seconds, so the former
+    // while-loop was O(N) in the jump distance — expensive when the CPU
+    // idles between sound-producing bursts.
+    uint64_t counts = (cpu_cycles - next_prescaler_cycle_) / per + 1;
+    next_prescaler_cycle_ += counts * per;
+    prescaler_ = static_cast<uint8_t>(
+        static_cast<uint64_t>(prescaler_) + counts); // 8-bit wrap intended
 }
 
 void ClockTimer::reset()

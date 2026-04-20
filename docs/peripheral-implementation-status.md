@@ -82,25 +82,67 @@ intc.raise(InterruptController::IrqSource::T16_CRA0);
 タイマの入力クロック周波数を計算するコンポーネント。タイマが `cycles_per_count()` を求める際に参照する。
 
 ```
-CLKCTL.TSx[2:0] → 分周比 2^(TSx+1)
+CLKCTL.TSx[2:0] → 分周比 (非線形テーブル、周辺ごとに異なる)
+  T16 全ch (III-4 表4.3, *1):
+    TS=0:/1 TS=1:/2 TS=2:/4 TS=3:/16 TS=4:/64 TS=5:/256 TS=6:/1024 TS=7:/4096
+  T8 Ch.0/3/5 (III-2 表2.2 *2):
+    /1 /2 /4 /8 /16 /64 /128 /256
+  T8 Ch.1 (*3):
+    /32 /64 /128 /256 /512 /1024 /2048 /4096
+  T8 Ch.2/4 (*4):
+    /2 /4 /8 /16 /32 /64 /2048 /4096
 CLKCTL.TONx     → クロック有効/無効
+P8TPCKx         → 分周チェーンをバイパスして θ/1 を直接使用 (0x40146/40140)
 PWRCTL.CLKDT[1:0] (bits 7:6) → CPU分周 ×1 / ×1/2 / ×1/4 / ×1/8
 PWRCTL.CLKCHG    (bit 2)     → 1=OSC3経路, 0=OSC1経路 (P/ECEでは常に1)
 P07 (Port 0 bit 7)           → OSC3実周波数 1=24MHz, 0=48MHz
 ```
 
-実効 CPU クロック:
+実効 CPU / タイマソースクロック:
 
 ```
 OSC3 = (P07==1) ? 24 MHz : 48 MHz
-CPU  = OSC3 >> CLKDT
+CPU  = OSC3 >> CLKDT               (PWRCTL.CLKDT が効く)
+T16/T8 source = OSC3 / TS_DIV[TSx] (CLKDT には依存しない、TS_DIV は非線形)
 ```
 
 - `cpu_clock_hz()`: P07 と PWRCTL.CLKDT から CPU クロックを返す
   （CLKCHG は無視 — P/ECE カーネルが常に 1 を維持する前提）
-- `t8_clock_hz(ch)`: CLKSEL_T8 + CLKCTL_T8_01/23 から T8 チャンネルのクロックを返す
-- `t16_clock_hz(ch, cksl)`: CLKCTL_T16_ch から T16 チャンネルのクロックを返す
+- `osc3_hz()`: **OSC3 をそのまま返す。CLKDT 非依存**。S1C33209 のタイマ系は
+  CPU コアクロックと別経路で OSC3 から分周供給されており、CPU 分周器 (CLKDT)
+  はタイマレートに作用しない。T8/T16 の CLKCTL プリスケーラはこの OSC3 を入力とする。
+- `t8_clock_hz(ch)`: チャンネルごとの分周テーブルで `osc3_hz()` を TSx 分周。
+  Ch.0 は CLKCTL_T8_01 の low nibble、Ch.1 は同レジスタの high nibble、等
+  (pair で 1 バイトを共有)。P8TPCKx=1 の場合はバイパスして θ/1 を直接使用。
+- `t16_clock_hz(ch, cksl)`: CLKCTL_T16_ch の low/high nibble (cksl で選択) で
+  `osc3_hz()` を T16 用テーブルで分周。
 - `on_clock_change` コールバック: CPU クロック変化時に通知（pace 再計算／タイマ wake point 更新）
+
+### CLKCTL 分周テーブルと RTC プリスケーラ — 罠
+
+CLKCTL TSx の分周比は **S1C33209 III-4 表4.3** の非線形テーブル:
+`{1, 2, 4, 16, 64, 256, 1024, 4096}`。TS=0..2 は 2^TS と一致するが TS≥3 で
+飛ぶ。カーネル既定値との整合性チェック:
+
+| 用途 | TS | 分周 | T16 周波数 | 期待値 |
+|---|---|---|---|---|
+| 1ms タイマ ([timer.c:378](../../sdk/sysdev/pcekn/timer.c#L378)) | 2 | /4 | OSC3/4 = 6 MHz @24MHz | CR0B=5999 → 1 ms ✓ |
+| USB 6MHz ([hard.c:215](../../sdk/sysdev/pcekn/hard.c#L215)) | 0 | /1 | OSC3 = 24 MHz | 4 tick 周期 → 6 MHz ✓ |
+| GetSysClock 測定 | 4 | /64 | OSC3/64 = 375 kHz | clkp1=4 @24MHz ✓ |
+
+RTC プリスケーラ (`rTCD` = 0x40153) は **256 Hz でカウント**
+([peripheral_rtc.hpp](../src/soc/peripheral_rtc.hpp))。bit3 が 16 Hz
+(半周期 31.25 ms) で反転するので、GetSysClock ([hard.c:237](../../sdk/sysdev/pcekn/hard.c#L237))
+の bit3 エッジ待ちが 31.25 ms 窓になり、その間に T16 (375 kHz) が 11718 tick
+進んで a=240 → `clkp1=4` が導かれる。
+
+**やってはいけない組合せ** (過去のバグ):
+- `/2^(TS+1)` を使う: TS=0 が /2 になって 1ms タイマが 3MHz になる。
+- `/2^TS` + プリスケーラ 1024 Hz: 桁で偶然合うが TS=4 以降の実体と食い違う
+  (TS=5 で /32 vs 正解 /256 など)。
+- タイマ base を `cpu_clock_hz` ベース (CLKDT で分周される側) にする:
+  GetSysClock が PWRCTL=0xE7 (CPU=OSC3/8) 下で走るので T16 が 8 倍遅くなり
+  `clkp1` が 1/8 になる。タイマは OSC3 直接入力で CLKDT 非依存が正しい。
 
 ### P07 と「48MHz 倍速モード」— 罠
 
@@ -164,9 +206,26 @@ bp[0x2d1] = a & 0x80;` で読み出し、同じ値を出力として書き戻す
 
 rT16CTL ビット: PRUN[0], PRESET[1], PTM[2], CKSL[3], OUTINV[4], SELCRB[5], SELFM[6]
 
-- カウントアップ式: TC==CRB → raise_crb（TCはリセットされない）、TC==CRA → raise_cra + TC=0（SELFM=0時）
+- **TC は常に CRB でリセット** (周期 = CRB+1)。S1C33209 テクニカルマニュアル III-4
+  の図4.4 (`CRxA=3, CRxB=5`) のカウンタ値シーケンス `0,1,2,3,4,5,0,1,...` が根拠。
+  CRA は周期内の比較ポイントで、TMx 出力ピンのトグルと CRA IRQ を発生する
+  (TC はリセットしない)。
+- **SELFM ビット (bit 6) はクロック出力ファインモードの選択**。`SELFM=1` の場合、
+  比較は `CRxA[15:1]` vs `TCx[14:0]` となり、`CRxA[0]` で入力クロックの立ち上がり/
+  半周期遅れの立ち下がりを選択して出力デューティーを調整できる。
+  **SELFM は TC のリセット先には影響しない**。
+- エミュレータは SELFM=1 のファインモードを精密にはモデル化していない
+  (TC==CRA で CRA IRQ を発生するだけ)。出力波形をバイト単位で観測するアプリ
+  でない限り実害はないはず。
 - PRESET=1 書き込み: TC=0 かつ next_tick_cycle_=0 にリセット（自己クリア）
-- P/ECE カーネルはチャンネル0 CRA で約1msタイマを構成する
+
+**P/ECE カーネルの使い方**:
+- Ch.0 (1ms タイマ): CRA=99 (未使用), **CRB=5999**, SELFM=0。trap30 (CRB0) が
+  1ms ごとに発火し timer_isr で ClockTicks++
+  ([timer.c:378](../../sdk/sysdev/pcekn/timer.c#L378))。
+- Ch.1 (サウンド PWM): CRA=PWMC, CRB=PWMC-1, CTL=0x77 (SELFM=1, SELCRB=1, OUTINV=1)。
+  ファインモードで CRA の半周期刻みデューティー調整を使う。
+- Ch.4 (USB 6MHz): CRA=(clkp1+1)/2-1, CRB=clkp1-1, SELFM=0。P26 出力クロック。
 
 **ユニットテスト**: [src/tests/unit/test_peripheral_t16.cpp](../src/tests/unit/test_peripheral_t16.cpp) — 10テスト
 

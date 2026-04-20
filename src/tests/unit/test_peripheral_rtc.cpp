@@ -35,7 +35,7 @@ protected:
 // ---------------------------------------------------------------------------
 // Prescaler bit3 must toggle so GetSysClock() can calibrate.  At default
 // cpu_clock_hz (24 MHz, P/ECE P07=1 default) the prescaler ticks every
-// 24 MHz / 256 = 93,750 cycles; bit3 toggles every 8 ticks.
+// 24 MHz / 256 = 93,750 cycles; bit3 toggles every 8 ticks (→ 16 Hz).
 // ---------------------------------------------------------------------------
 TEST_F(RtcFixture, PrescalerBit3_TogglesAtExpectedRate) {
     EXPECT_EQ(0, rtc.rtcsub() & 0x08);

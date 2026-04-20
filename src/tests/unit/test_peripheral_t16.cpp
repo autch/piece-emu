@@ -24,10 +24,13 @@ protected:
         intc.attach(bus, [this](int no, int) { last_irq = no; });
         t16.attach(bus, intc, clk);
 
-        // CLKCTL_T16_0 = 0x08: TONA=1, TSA=0 → timer clock = 48 MHz / 2 = 24 MHz.
-        // CLKCTL_T16_0 is the hi byte of the halfword at 0x040146.
-        // → cycles_per_count = ceil(48 MHz / 24 MHz) = 2
-        bus.write16(0x040146, 0x0800);
+        // Configure cpc = 2:
+        //   Default OSC3 = 24 MHz (P07=1), CLKDT=0 → CPU = 24 MHz
+        //   CLKCTL_T16_0 = 0x09 (TONA=1, TSA=1) → T16 = OSC3/2 = 12 MHz
+        //   cpc = ceil(24 MHz / 12 MHz) = 2
+        // (The absolute frequencies don't matter for these tests; only
+        //  the CPU-to-T16 cycle ratio does.)
+        bus.write16(0x040146, 0x0900); // CLKCTL_T16_0: TONA=1 TSA=1
     }
 
     // Enable T16_CRA0 interrupt (trap 31):
@@ -62,33 +65,39 @@ TEST_F(T16Fixture, PRUN_Zero_NoCount) {
 }
 
 // ---------------------------------------------------------------------------
-// CRA match raises T16_CRA0 IRQ and resets TC (SELFM=0)
+// CRB match raises T16_CRB0 IRQ and resets TC (period = CRB+1).
 //
-// CRA=3, cpc=2: TC increments at cycles 0,2,4 → TC goes 0→1→2→3.
-// On TC==CRA at cycle 4: IRQ raised, TC reset to 0.
+// CRB=3, cpc=2: TC sequence 0,1,2,3,0,1,... per the S1C33209 tech manual III-4.
+// tick(4) → 3 TC ticks → TC reaches 3 == CRB → IRQ fires.  TC=3 until next
+// tick (the reset takes one clock).
 // ---------------------------------------------------------------------------
-TEST_F(T16Fixture, CRA_Match_IRQ_And_TC_Reset) {
-    enable_cra0_irq();
-    set_cra(3);
-    set_ctl(0x01); // PRUN=1, SELFM=0 (default)
-
-    t16.tick(4); // TC reaches 3 == CRA → T16_CRA0, TC=0
-    EXPECT_EQ(31, last_irq) << "T16_CRA0 trap number must be 31";
-    EXPECT_EQ(0,  t16.tc())  << "TC must be reset to 0 on CRA match (SELFM=0)";
-}
-
-// ---------------------------------------------------------------------------
-// CRB match raises T16_CRB0 IRQ without resetting TC
-// ---------------------------------------------------------------------------
-TEST_F(T16Fixture, CRB_Match_IRQ_No_TC_Reset) {
+TEST_F(T16Fixture, CRB_Match_IRQ_And_TC_Reset) {
     enable_crb0_irq();
-    set_cra(100); // CRA far away — no CRA match during test
     set_crb(3);
     set_ctl(0x01); // PRUN=1
 
-    t16.tick(4); // TC reaches 3 == CRB → T16_CRB0
+    t16.tick(4); // 3 TC ticks → TC = 3 = CRB, IRQ fires
     EXPECT_EQ(30, last_irq) << "T16_CRB0 trap number must be 30";
-    EXPECT_EQ(3,  t16.tc())  << "TC must not be reset by CRB match";
+    EXPECT_EQ(3,  t16.tc())  << "TC holds CRB value on the matching tick";
+
+    // Next TC tick wraps to 0 (real HW: reset on the following clock edge).
+    t16.tick(6); // one more TC tick (cpc=2)
+    EXPECT_EQ(0, t16.tc()) << "TC wraps to 0 on the tick after CRB match";
+}
+
+// ---------------------------------------------------------------------------
+// CRA match raises T16_CRA0 IRQ without resetting TC.  CRB is placed far away
+// so it doesn't reset TC within the window.
+// ---------------------------------------------------------------------------
+TEST_F(T16Fixture, CRA_Match_IRQ_No_TC_Reset) {
+    enable_cra0_irq();
+    set_crb(100); // CRB far away — no reset during test
+    set_cra(3);
+    set_ctl(0x01); // PRUN=1
+
+    t16.tick(4); // 3 TC ticks (cpc=2) → TC reaches 3 == CRA → match
+    EXPECT_EQ(31, last_irq) << "T16_CRA0 trap number must be 31";
+    EXPECT_EQ(3,  t16.tc())  << "TC must not be reset by CRA match";
 }
 
 // ---------------------------------------------------------------------------
@@ -109,38 +118,36 @@ TEST_F(T16Fixture, PRESET_Resets_TC_And_Self_Clears) {
 }
 
 // ---------------------------------------------------------------------------
-// ISR flag for CRA0 is set regardless of IEN/priority
+// ISR flag for CRB0 is set regardless of IEN/priority
 // ---------------------------------------------------------------------------
-TEST_F(T16Fixture, CRA_Match_SetsISR_Unconditionally) {
+TEST_F(T16Fixture, CRB_Match_SetsISR_Unconditionally) {
     // IEN=0 (no delivery) — ISR flag must still be set.
-    set_cra(2);
+    set_crb(2);
     set_ctl(0x01); // PRUN=1
 
-    // TC: 0→1→2 (CRA match at cycle 2).
-    t16.tick(2);
-    // T16_CRA0 ISR: regs_ byte offset 34, bit 3
-    EXPECT_NE(0, intc.reg(34) & (1 << 3)) << "CRA0 ISR bit must be set";
+    // TC: 0→1→2 then reset to 0. Full period = CRB+1 = 3 ticks, * cpc=2 = 6.
+    t16.tick(6);
+    // T16_CRB0 ISR: regs_ byte offset 34, bit 2
+    EXPECT_NE(0, intc.reg(34) & (1 << 2)) << "CRB0 ISR bit must be set";
     EXPECT_EQ(-1, last_irq) << "No delivery without IEN";
 }
 
 // ---------------------------------------------------------------------------
-// CRB match fires before CRA in the same tick (both set on TC==CRB==CRA)
+// Both CRA and CRB fire in the same tick when CRA==CRB (CRA compare matches
+// just as TC hits CRB and resets).
 // ---------------------------------------------------------------------------
 TEST_F(T16Fixture, Both_CRA_And_CRB_Match_Same_Tick) {
-    // When CRA==CRB the implementation checks CRB first, then CRA.
-    // Enable both CRB0 and CRA0 in one write (IEN3 bits 2 and 3) to avoid
-    // the second write overwriting the first.
+    // Enable both CRB0 and CRA0 in one write (IEN3 bits 2 and 3).
     bus.write16(INTC_BASE + 6,  0x0003); // priority byte 6 = 3 (shared)
     bus.write16(INTC_BASE + 18, 0x000C); // IEN3[2]=CRB0, IEN3[3]=CRA0
     set_cra(3);
     set_crb(3);
-    set_ctl(0x01); // PRUN=1, SELFM=0
+    set_ctl(0x01); // PRUN=1
 
-    t16.tick(4); // TC==3 triggers CRB, then CRA (TC reset to 0 by CRA)
-    // ISR for CRB0 (bit 2 of offset 34) and CRA0 (bit 3 of offset 34) both set
+    t16.tick(4); // 3 TC ticks: TC reaches 3 → both CRA and CRB match
     EXPECT_NE(0, intc.reg(34) & (1 << 2)) << "CRB0 ISR must be set";
     EXPECT_NE(0, intc.reg(34) & (1 << 3)) << "CRA0 ISR must be set";
-    EXPECT_EQ(0, t16.tc()) << "TC reset by CRA match";
+    EXPECT_EQ(3, t16.tc()) << "TC holds CRB value on match (wraps on next tick)";
 }
 
 // ---------------------------------------------------------------------------

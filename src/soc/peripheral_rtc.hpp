@@ -95,8 +95,10 @@ private:
 
     uint64_t prescaler_period(uint32_t cpu_hz) const
     {
-        // 8-bit prescaler at 256 Hz → tick interval = cpu_hz / 256.
-        // bit3 toggles every 8 ticks → 32 Hz, half-period = cpu_hz / 64.
+        // rTCD (bp[0x153]) ticks at 256 Hz — standard RTC prescaler fed
+        // from OSC1 (32.768 kHz) through the chip's own divider chain.
+        // bit7 toggles at 1 Hz (second mark), bit3 at 16 Hz (half-period
+        // 31.25 ms — used by GetSysClock to time its T16 measurement).
         if (cpu_hz == 0) return 24'000'000u / 256u;
         return static_cast<uint64_t>(cpu_hz) / 256u;
     }

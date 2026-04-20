@@ -97,19 +97,28 @@ void Timer8bit::tick(uint64_t cpu_cycles)
 
     uint64_t cpc = cycles_per_count();
     if (cpc == 0) return; // clock stopped
+    if (cpu_cycles < next_tick_cycle_) return;
 
-    // Advance counter for every elapsed tick cycle
-    while (cpu_cycles >= next_tick_cycle_) {
-        next_tick_cycle_ += cpc;
+    // Number of T8 input-clock counts to process in this tick.
+    uint64_t counts = (cpu_cycles - next_tick_cycle_) / cpc + 1;
+    next_tick_cycle_ += counts * cpc;
 
-        if (ptd_ == 0) {
-            // Underflow: reload and raise interrupt
-            ptd_ = rld_;
-            intc_->raise(
-                static_cast<InterruptController::IrqSource>(
-                    static_cast<int>(InterruptController::IrqSource::T8_UF0) + ch_));
-        } else {
-            --ptd_;
-        }
+    // T8 is a down-counter with reload: ptd_ starts at rld_, decrements
+    // per count; when a tick sees ptd_ == 0 it raises IRQ and reloads.
+    // Underflow period = rld_ + 1 counts.
+    if (counts <= static_cast<uint64_t>(ptd_)) {
+        // No underflow in this window.
+        ptd_ -= static_cast<uint8_t>(counts);
+    } else {
+        // At least one underflow.  ISR bit is sticky so a single raise
+        // covers any number of missed underflows within the window —
+        // matches real-HW latching (multiple HW underflows while the
+        // CPU has the interrupt masked only yield one pending IRQ).
+        const uint64_t period    = static_cast<uint64_t>(rld_) + 1u;
+        const uint64_t remaining = counts - ptd_ - 1u;
+        ptd_ = static_cast<uint8_t>(rld_ - (remaining % period));
+        intc_->raise(
+            static_cast<InterruptController::IrqSource>(
+                static_cast<int>(InterruptController::IrqSource::T8_UF0) + ch_));
     }
 }

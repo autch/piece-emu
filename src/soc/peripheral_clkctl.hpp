@@ -29,10 +29,16 @@ class Bus;
 //   bit  [7]   TONB — clock B enable
 //
 // CLKSEL byte layout (c_CLKSELtag for T8):
-//   bit 0 — timer 0 (or 4) clock: 0=clock A, 1=clock B
-//   bit 1 — timer 1 (or 5) clock
-//   bit 2 — timer 2
-//   bit 3 — timer 3
+//   0x040146 bits [3:0]: P8TPCK0..P8TPCK3 — T8 Ch.0..3 raw-prescaler bypass
+//   0x040140 bits [1:0]: P8TPCK4, P8TPCK5 — T8 Ch.4/5 raw-prescaler bypass
+//   When P8TPCKx = 1, T8 Ch.x runs on the prescaler INPUT clock (θ/1) — i.e.
+//   no division applied — and the CLKCTL TSx setting is ignored.  Default 0.
+//
+// Note: T8 does NOT have a "clock A vs clock B" selector per channel.  Each
+// channel has its own dedicated TS field within a shared CLKCTL byte:
+//   Ch.0 → 0x4014D low nibble,  Ch.1 → 0x4014D high nibble
+//   Ch.2 → 0x4014E low nibble,  Ch.3 → 0x4014E high nibble
+//   Ch.4 → 0x40145 low nibble,  Ch.5 → 0x40145 high nibble
 //
 // CPU clock pipeline:
 //   OSC3     = P07==0 ? 48 MHz : 24 MHz      (external oscillator-speed pin)
@@ -62,6 +68,12 @@ public:
     // Current CPU clock frequency in Hz.
     uint32_t cpu_clock_hz() const;
 
+    // OSC3 frequency in Hz.  Selected by the P07 pin (1 → 24 MHz,
+    // 0 → 48 MHz).  This is the base that CLKCTL TSx fields divide down
+    // from for T8/T16 — independent of PWRCTL.CLKDT, which only divides
+    // the CPU core clock.
+    uint32_t osc3_hz() const;
+
     // Monotonically-increasing generation counter.  Incremented on every write
     // to any clock-control register (CLKSEL, CLKCTL, PWRCTL).  Timers compare
     // their cached-cpc generation against this to decide when to recompute.
@@ -85,24 +97,29 @@ public:
     void set_p07(bool slow);
 
     // Direct register access (for unit tests)
-    uint8_t pwrctl()          const { return pwrctl_; }
-    uint8_t clksel_t8()       const { return clksel_t8_; }
+    uint8_t pwrctl()           const { return pwrctl_; }
+    uint8_t clksel_t8()        const { return clksel_t8_03_; }
+    uint8_t clksel_t8_45()     const { return clksel_t8_45_; }
     uint8_t clkctl_t16(int ch) const { return clkctl_t16_[ch]; }
-    uint8_t clkctl_t8_01()    const { return clkctl_t8_01_; }
-    uint8_t clkctl_t8_23()    const { return clkctl_t8_23_; }
+    uint8_t clkctl_t8_01()     const { return clkctl_t8_[0]; }
+    uint8_t clkctl_t8_23()     const { return clkctl_t8_[1]; }
+    uint8_t clkctl_t8_45()     const { return clkctl_t8_[2]; }
 
 private:
-    uint32_t config_gen_  = 0;   // incremented on any register write
-    uint8_t clksel_t8_    = 0;   // 0x040146
-    uint8_t clkctl_t16_[6] = {}; // 0x040147-0x04014C
-    uint8_t clkctl_t8_01_ = 0;   // 0x04014D
-    uint8_t clkctl_t8_23_ = 0;   // 0x04014E
-    uint8_t pwrctl_       = 0;   // 0x040180 (CLKCHG at bit 2, CLKDT at bits 7:6)
-    bool    p07_slow_     = true;  // P/ECE default: P07=1 → OSC3=24 MHz
+    uint32_t config_gen_       = 0;   // incremented on any register write
+    uint8_t  clksel_t8_03_     = 0;   // 0x040146: P8TPCK0..3 (bits 0..3)
+    uint8_t  clksel_t8_45_     = 0;   // 0x040140: P8TPCK4..5 (bits 0..1)
+    uint8_t  clkctl_t16_[6]    = {};  // 0x040147-0x04014C
+    uint8_t  clkctl_t8_[3]     = {};  // [0]=0x4014D Ch.0/1,
+                                      // [1]=0x4014E Ch.2/3,
+                                      // [2]=0x40145  Ch.4/5
+    uint8_t  pwrctl_           = 0;   // 0x040180 (CLKCHG bit2, CLKDT bits 7:6)
+    bool     p07_slow_         = true; // P/ECE default: P07=1 → OSC3=24 MHz
 
-    // Compute timer clock from a CLKCTL byte, selecting clock A or B.
-    // base is the CPU clock. Returns 0 if clock is stopped.
-    uint32_t clock_from_clkctl(uint8_t clkctl, bool use_b, uint32_t base) const;
+    // Compute timer clock from a CLKCTL byte with a specific divisor table.
+    // use_b picks the hi-nibble (B) vs lo-nibble (A) TS/TON fields.
+    uint32_t clock_from_clkctl(uint8_t clkctl, bool use_b, uint32_t base,
+                               const uint32_t (&div_table)[8]) const;
 
     void write_single(uint32_t addr, uint8_t val);
 };

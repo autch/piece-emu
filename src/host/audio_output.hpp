@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <cstddef>
 
 struct SDL_AudioStream;
 class Sound;
@@ -44,6 +45,12 @@ private:
     Sound*           sound_  = nullptr;
     bool             trace_  = false;
     AudioLog*        log_    = nullptr;
+
+    // Per-callback scratch buffer.  Lives on the heap (class member) so it
+    // never stresses the audio thread's stack, which can be as small as
+    // 64 KB on Windows.  Accessed only from the SDL audio thread.
+    static constexpr std::size_t CB_BUF_SAMPLES = 8192; // 16 KB
+    int16_t cb_buf_[CB_BUF_SAMPLES] = {};
 
     // SDL audio callback (thread: SDL audio thread).
     static void audio_cb(void* userdata, SDL_AudioStream* stream,
