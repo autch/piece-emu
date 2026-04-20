@@ -542,3 +542,24 @@ Reference PDFs in `docs/` (Japanese):
 - `S1C33 family スタンダードコア用アプリケーションノート.pdf` — 割り込み・ブート手順
 
 ---
+
+### 同梱サードパーティコード / Bundled Third-Party Code
+
+- [`src/third_party/stb/stb_image_write.h`](src/third_party/stb/stb_image_write.h)
+  — Sean Barrett 氏による PNG 等のイメージ書き出しライブラリ（`stb_image_write` v1.16）。
+  パブリックドメインで配布されており、入手元は
+  [nothings/stb（GitHub）](https://github.com/nothings/stb) です。
+  F12 スクリーンショット機能で使用しています。
+  Sean Barrett's single-header image writer (`stb_image_write` v1.16), released into
+  the public domain. Source: [nothings/stb on GitHub](https://github.com/nothings/stb).
+  Used by the F12 screenshot feature.
+
+---
+
+## ライセンス / License
+
+本プロジェクトのソースコードは [MIT ライセンス](LICENSE) の下で配布されています。
+本プロジェクトのコードの大半は GitHub Copilot および Claude Code（Anthropic Claude を搭載した AI コーディングアシスタント）を用いて記述されています。
+
+This project's source code is distributed under the [MIT License](LICENSE).
+Most of the code in this project was written with the assistance of GitHub Copilot and Claude Code (an AI coding assistant powered by Anthropic Claude).
