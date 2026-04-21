@@ -102,6 +102,11 @@ void LcdRenderer::present_last()
     SDL_RenderPresent(renderer_);
 }
 
+void LcdRenderer::set_joy_handler(JoyButtonCb cb)
+{
+    joy_btn_cb_ = std::move(cb);
+}
+
 bool LcdRenderer::poll_events(const KeyCb& key_cb,
                               const PadButtonCb& pad_btn_cb,
                               const PadAxisCb& pad_axis_cb)
@@ -153,6 +158,37 @@ bool LcdRenderer::poll_events(const KeyCb& key_cb,
                 pad_axis_cb(static_cast<int>(e.gaxis.axis),
                             static_cast<int>(e.gaxis.value));
             break;
+        case SDL_EVENT_JOYSTICK_ADDED:
+            // Open the first non-gamepad joystick when a raw-joystick handler
+            // has been registered (e.g. for the uConsole).
+            if (joy_btn_cb_ && !joystick_ &&
+                !SDL_IsGamepad(e.jdevice.which)) {
+                joystick_ = SDL_OpenJoystick(e.jdevice.which);
+                if (joystick_) {
+                    std::fprintf(stderr, "[JOY] connected: %s (id=%u)\n",
+                        SDL_GetJoystickName(joystick_),
+                        static_cast<unsigned>(e.jdevice.which));
+                } else {
+                    std::fprintf(stderr, "[JOY] SDL_OpenJoystick failed: %s\n",
+                                 SDL_GetError());
+                }
+            }
+            break;
+        case SDL_EVENT_JOYSTICK_REMOVED:
+            if (joystick_ &&
+                SDL_GetJoystickID(joystick_) == e.jdevice.which) {
+                std::fprintf(stderr, "[JOY] disconnected (id=%u)\n",
+                    static_cast<unsigned>(e.jdevice.which));
+                SDL_CloseJoystick(joystick_);
+                joystick_ = nullptr;
+            }
+            break;
+        case SDL_EVENT_JOYSTICK_BUTTON_DOWN:
+        case SDL_EVENT_JOYSTICK_BUTTON_UP:
+            if (joy_btn_cb_ && joystick_)
+                joy_btn_cb_(e.type == SDL_EVENT_JOYSTICK_BUTTON_DOWN,
+                            static_cast<int>(e.jbutton.button));
+            break;
         case SDL_EVENT_WINDOW_EXPOSED:
         case SDL_EVENT_WINDOW_SHOWN:
         case SDL_EVENT_WINDOW_RESTORED:
@@ -171,6 +207,7 @@ bool LcdRenderer::poll_events(const KeyCb& key_cb,
 
 void LcdRenderer::destroy()
 {
+    if (joystick_) { SDL_CloseJoystick(joystick_);   joystick_ = nullptr; }
     if (gamepad_)  { SDL_CloseGamepad(gamepad_);     gamepad_  = nullptr; }
     if (texture_)  { SDL_DestroyTexture(texture_);   texture_  = nullptr; }
     if (renderer_) { SDL_DestroyRenderer(renderer_); renderer_ = nullptr; }

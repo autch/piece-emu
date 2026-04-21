@@ -131,6 +131,12 @@ endif()
 # Requires SDL3.  Enable by building with -DVCPKG_MANIFEST_FEATURES=system.
 # ---------------------------------------------------------------------------
 if(SDL3_FOUND)
+    # Platform-specific joystick layout.  Set at configure time to bake in the
+    # correct button-index mapping for the target device.
+    # Supported values: "" (generic/gamepad only), "uconsole" (ClockworkPi uConsole).
+    set(PIECE_PLATFORM "" CACHE STRING
+        "Target platform for raw joystick button layout (e.g. uconsole)")
+
     add_executable(piece-emu-system
         system_main.cpp
         system/button_input.cpp
@@ -147,6 +153,14 @@ if(SDL3_FOUND)
         piece_core
         CLI11::CLI11
     )
+
+    if(PIECE_PLATFORM STREQUAL "uconsole")
+        target_compile_definitions(piece-emu-system PRIVATE PIECE_PLATFORM_UCONSOLE)
+        message(STATUS "piece-emu-system: platform=uconsole (raw joystick input enabled)")
+    elseif(NOT PIECE_PLATFORM STREQUAL "")
+        message(WARNING "piece-emu-system: unknown PIECE_PLATFORM '${PIECE_PLATFORM}' — ignored")
+    endif()
+
     message(STATUS "piece-emu-system target enabled")
 else()
     message(STATUS "SDL3 not found — piece-emu-system target skipped")

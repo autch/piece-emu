@@ -7,6 +7,7 @@ struct SDL_Window;
 struct SDL_Renderer;
 struct SDL_Texture;
 struct SDL_Gamepad;
+struct SDL_Joystick;
 
 // ============================================================================
 // LcdRenderer — SDL3-based display for the S6B0741 LCD (128×88 pixels)
@@ -46,6 +47,16 @@ public:
     using PadButtonCb = std::function<void(bool is_down, int gp_button)>;
     // Gamepad axis event: (SDL_GamepadAxis, int16_t value).
     using PadAxisCb   = std::function<void(int axis, int value)>;
+    // Raw joystick button event: (is_down, button_index).  Used for devices
+    // that SDL3 does not recognise as a gamepad (e.g. ClockworkPi uConsole).
+    // Set via set_joy_handler() before the event loop; the first non-gamepad
+    // joystick device seen will be opened and forwarded to this callback.
+    using JoyButtonCb = std::function<void(bool is_down, int js_button)>;
+
+    // Register a raw-joystick button callback (platform-specific layout).
+    // Call before the event loop.  Passing an empty function disables joystick
+    // handling (default).
+    void set_joy_handler(JoyButtonCb cb);
 
     // Poll SDL3 events.  Calls key_cb for keyboard, pad_btn_cb / pad_axis_cb
     // for any connected gamepad.  Gamepad hot-plug is handled internally.
@@ -70,5 +81,8 @@ private:
     // First connected gamepad.  Opened on SDL_EVENT_GAMEPAD_ADDED and closed
     // on SDL_EVENT_GAMEPAD_REMOVED.  Additional gamepads are ignored — the
     // P/ECE has only one controller.
-    SDL_Gamepad*  gamepad_  = nullptr;
+    SDL_Gamepad*   gamepad_  = nullptr;
+    // First non-gamepad joystick opened when joy_btn_cb_ is set.
+    SDL_Joystick*  joystick_ = nullptr;
+    JoyButtonCb    joy_btn_cb_;
 };

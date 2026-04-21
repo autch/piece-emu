@@ -86,3 +86,28 @@ void handle_gamepad_axis(int axis, int value, ButtonState& btn)
     }
     (void)old_k6;
 }
+
+void handle_joystick_button(bool is_down, int js_button, ButtonState& btn,
+                            std::span<const JoyBtnEntry> map)
+{
+    if (js_button < 0 || static_cast<std::size_t>(js_button) >= map.size())
+        return;
+    const JoyBtnEntry& e = map[static_cast<std::size_t>(js_button)];
+    if (e.reg == KReg::NONE) return;
+    uint8_t& reg = (e.reg == KReg::K5) ? btn.k5 : btn.k6;
+    if (is_down) reg &= ~(1u << e.bit);
+    else         reg |=  (1u << e.bit);
+}
+
+const JoyBtnEntry UCONSOLE_JOYBTN_MAP[10] = {
+    {KReg::K6, 5}, // 0: BTN_TRIGGER (X) → A
+    {KReg::K6, 5}, // 1: BTN_THUMB   (A) → A
+    {KReg::K6, 4}, // 2: BTN_THUMB2  (B) → B
+    {KReg::K6, 4}, // 3: BTN_TOP     (Y) → B
+    {},            // 4: BTN_TOP2   (phantom)
+    {},            // 5: BTN_PINKIE (phantom)
+    {},            // 6: BTN_BASE   (phantom)
+    {},            // 7: BTN_BASE2  (phantom)
+    {KReg::K5, 3}, // 8: BTN_BASE3 (SELECT) → K53
+    {KReg::K5, 4}, // 9: BTN_BASE4 (START)  → K54
+};

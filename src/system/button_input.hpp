@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <span>
 
 // ---------------------------------------------------------------------------
 // Button → K5D/K6D bit mapping (active-low)
@@ -36,3 +37,37 @@ void handle_gamepad_button(bool is_down, int gp_button, ButtonState& btn,
 // threshold).  `axis` is an SDL_GamepadAxis; `value` is the raw int16 axis
 // value from SDL_EVENT_GAMEPAD_AXIS_MOTION.
 void handle_gamepad_axis(int axis, int value, ButtonState& btn);
+
+// ---------------------------------------------------------------------------
+// Generic data-driven joystick button handler
+// ---------------------------------------------------------------------------
+
+// One entry in a joystick button map: which P/ECE register and bit to toggle.
+// KReg::NONE means the button is unmapped (silently ignored).
+enum class KReg : uint8_t { NONE, K5, K6 };
+struct JoyBtnEntry {
+    KReg    reg = KReg::NONE;
+    uint8_t bit = 0;
+};
+
+// Apply a raw SDL joystick button event using the supplied mapping table.
+// `js_button` is the SDL joystick button index; indices beyond map.size()
+// are silently ignored.
+void handle_joystick_button(bool is_down, int js_button, ButtonState& btn,
+                            std::span<const JoyBtnEntry> map);
+
+// ---------------------------------------------------------------------------
+// Per-platform mapping tables
+// ---------------------------------------------------------------------------
+
+// ClockworkPi uConsole — build with -DPIECE_PLATFORM=uconsole.
+// The uConsole device declares all BTN codes in 0x120…0x129 (including
+// phantom ones), so SDL assigns sequential indices:
+//   0 BTN_TRIGGER (X)                  → A (K65)
+//   1 BTN_THUMB   (A)                  → A (K65)
+//   2 BTN_THUMB2  (B)                  → B (K64)
+//   3 BTN_TOP     (Y)                  → B (K64)
+//   4–7 BTN_TOP2/PINKIE/BASE/BASE2     (phantom, unmapped)
+//   8 BTN_BASE3   (SELECT)             → K53
+//   9 BTN_BASE4   (START)              → K54
+extern const JoyBtnEntry UCONSOLE_JOYBTN_MAP[10];

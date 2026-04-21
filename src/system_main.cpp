@@ -5,7 +5,7 @@
 //   - Keyboard input mapped to P/ECE buttons via PortCtrl
 //   - LCD rendering driven by HSDMA Ch0 completion (matches app frame rate)
 //
-// Key bindings:
+// Key bindings (generic):
 //   Arrow keys  → D-pad (right/left/down/up = K60/K61/K62/K63)
 //   Z           → B button (K64)
 //   X           → A button (K65)
@@ -15,6 +15,13 @@
 //   Shift+F5    → cold start (also resets BCU area / PortCtrl / LCD)
 //   F12         → save PNG screenshot
 //   Escape      → quit
+//
+// ClockworkPi uConsole (build with -DPIECE_PLATFORM=uconsole):
+//   Arrow keys  → D-pad (reported by uConsole as keyboard EV_KEY events)
+//   BTN_THUMB   (A) / BTN_TRIGGER (X) → A button (K65)
+//   BTN_THUMB2  (B) / BTN_TOP     (Y) → B button (K64)
+//   BTN_BASE3 (SELECT) → SELECT (K53)
+//   BTN_BASE4 (START)  → START  (K54)
 
 #include "bus.hpp"
 #include "cpu.hpp"
@@ -230,6 +237,16 @@ int main(int argc, char** argv)
                 (static_cast<uint16_t>(btn.k5) << 8) | btn.k6,
                 std::memory_order_relaxed);
         };
+
+#ifdef PIECE_PLATFORM_UCONSOLE
+        // uConsole: face buttons and Start/Select arrive as raw joystick
+        // button events (SDL3 has no gamepad mapping for this device).
+        // D-pad is keyboard EV_KEY and is already handled by handle_key().
+        renderer->set_joy_handler([&btn, &publish_buttons](bool is_down, int js_btn) {
+            handle_joystick_button(is_down, js_btn, btn, UCONSOLE_JOYBTN_MAP);
+            publish_buttons();
+        });
+#endif
 
         while (!quit_flag.load(std::memory_order_relaxed)) {
             if (!renderer->poll_events(
