@@ -3,6 +3,7 @@
 #include "cpu.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cstdint>
 
 void PiecePeripherals::attach(Bus& bus, Cpu& cpu)
@@ -42,12 +43,12 @@ void PiecePeripherals::tick(uint64_t cycles)
     uint32_t mt16 = timer_active_mask_ & 0x003Fu;
     uint32_t mt8  = (timer_active_mask_ >> 8) & 0x000Fu;
     while (mt16) {
-        int i = __builtin_ctz(mt16);
+        int i = std::countr_zero(mt16);
         t16_ch[i].tick(cycles);
         mt16 &= mt16 - 1;
     }
     while (mt8) {
-        int i = __builtin_ctz(mt8);
+        int i = std::countr_zero(mt8);
         t8_ch[i].tick(cycles);
         mt8 &= mt8 - 1;
     }
