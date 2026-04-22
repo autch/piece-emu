@@ -27,10 +27,10 @@ void Timer8bit::on_ctl_write(uint8_t val)
         ptd_ = rld_;
     }
 
-    // If PTRUN just started (0→1), initialise next tick reference
-    if (!(old & 0x01) && (ctl_ & 0x01)) {
-        // next_tick_cycle_ stays at its current value; tick() will catch up
-    }
+    // Track PTRUN transitions in the parent-owned active mask.
+    bool was_running = (old  & 0x01) != 0;
+    bool now_running = (ctl_ & 0x01) != 0;
+    if (was_running != now_running) update_active(now_running);
 }
 
 void Timer8bit::reset()
@@ -41,6 +41,14 @@ void Timer8bit::reset()
     next_tick_cycle_  = 0;
     cached_cpc_       = 0;
     cpc_gen_          = UINT32_MAX;
+    update_active(false); // PTRUN cleared
+}
+
+void Timer8bit::update_active(bool now_running)
+{
+    if (!active_mask_) return;
+    if (now_running) *active_mask_ |=  active_bit_;
+    else             *active_mask_ &= ~active_bit_;
 }
 
 void Timer8bit::attach(Bus& bus,
@@ -94,10 +102,12 @@ void Timer8bit::tick(uint64_t cpu_cycles)
 {
     // Not running
     if (!(ctl_ & 0x01)) return;
+    // Time gate before cycles_per_count() — skip the clock lookup on the
+    // common "nothing due yet" path.  See peripheral_t16.cpp for rationale.
+    if (cpu_cycles < next_tick_cycle_) return;
 
     uint64_t cpc = cycles_per_count();
     if (cpc == 0) return; // clock stopped
-    if (cpu_cycles < next_tick_cycle_) return;
 
     // Number of T8 input-clock counts to process in this tick.
     uint64_t counts = (cpu_cycles - next_tick_cycle_) / cpc + 1;

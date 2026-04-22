@@ -50,6 +50,27 @@ struct PiecePeripherals {
     void     tick(uint64_t cycles);
     uint64_t next_wake_cycle();
 
+private:
+    // Cached minimum wake point across all peripherals.  Invalidated by
+    // tick()/reset() — the only events that can legally shorten a wake
+    // point between successive do_tick() calls are I/O writes to timer
+    // registers, but update_timer_wake() already caps next_timer_wake at
+    // total_cycles + EVENT_INTERVAL, so those writes cannot push the
+    // actual do_tick deadline earlier than that bound anyway.  Recomputing
+    // on every query was ~44% of runtime in profiling (513M calls).
+    uint64_t wake_cached_ = 0;
+    bool     wake_valid_  = false;
+
+    // Bitmap of running timers — bits 0..5 are T16 channels 0..5, bits
+    // 8..11 are T8 channels 0..3.  Timers flip their bit on PRUN
+    // transitions.  tick() iterates set bits via __builtin_ctz so stopped
+    // timers incur zero per-tick cost (no member load, no branch).
+    // Before this mask: 52% of runtime was in do_tick's inlined body
+    // cycling through all 10 timer channels.
+    uint32_t timer_active_mask_ = 0;
+
+public:
+
     // Reset all on-chip peripherals and the board-level LCD.
     //   cold=false → hot start: 0x48120..0x4813F (BCU area) and
     //                0x402C0..0x402DF (I/O port ctrl/data) preserved,

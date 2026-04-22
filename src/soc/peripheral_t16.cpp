@@ -79,6 +79,14 @@ void Timer16bit::reset()
     cached_cpc_       = 0;
     cpc_gen_          = UINT32_MAX;
     cached_wake_      = UINT64_MAX;
+    update_active(false); // PRUN cleared
+}
+
+void Timer16bit::update_active(bool now_running)
+{
+    if (!active_mask_) return;
+    if (now_running) *active_mask_ |=  active_bit_;
+    else             *active_mask_ &= ~active_bit_;
 }
 
 void Timer16bit::attach(Bus& bus,
@@ -120,7 +128,10 @@ void Timer16bit::attach(Bus& bus,
                 tc_ = 0;
                 next_tick_cycle_ = 0;
             }
+            bool was_running = (ctl_ & 0x01) != 0;
             ctl_ = val & ~0x02u; // PRESET is self-clearing
+            bool now_running = (ctl_ & 0x01) != 0;
+            if (was_running != now_running) update_active(now_running);
             refresh_wake();
         }
     });
@@ -135,10 +146,14 @@ uint64_t Timer16bit::next_wake_cycle() const
 void Timer16bit::tick(uint64_t cpu_cycles)
 {
     if (!(ctl_ & 0x01)) return; // PRUN = 0
+    // Check the time gate before cycles_per_count().  cycles_per_count()
+    // was accounting for 2.2% of runtime (2.75B calls in silent-app gprof);
+    // the vast majority of those calls were for ticks where no timer count
+    // was due, and the result would be discarded immediately below.
+    if (cpu_cycles < next_tick_cycle_) return;
 
     uint64_t cpc = cycles_per_count();
     if (cpc == 0) return; // clock stopped
-    if (cpu_cycles < next_tick_cycle_) return;
 
     // Number of timer counts to process this tick.
     uint64_t counts = (cpu_cycles - next_tick_cycle_) / cpc + 1;

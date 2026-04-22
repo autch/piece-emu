@@ -306,9 +306,10 @@ void CpuRunner::run()
         while (!cpu.state.in_halt && !cpu.state.fault && !quit
                && total_cycles < next_render) {
             // Run to the nearest boundary in one burst.
-            uint64_t stop = std::min({next_timer_wake,
-                                      next_event_poll,
-                                      next_render});
+            // Pairwise std::min — initializer_list form showed up as ~5% of
+            // total time in gprof (hundreds of millions of iterator calls).
+            uint64_t stop = std::min(std::min(next_timer_wake, next_event_poll),
+                                     next_render);
             if (fast_path) {
                 while (!cpu.state.in_halt && !cpu.state.fault
                        && total_cycles < stop) {
@@ -371,8 +372,8 @@ void CpuRunner::run()
             }
             // In SLEEP, wake may be UINT64_MAX when RTC is idle — then
             // only a button press can wake.  Clamp to next_event_poll.
-            uint64_t target = std::min({wake, next_render,
-                                        next_event_poll});
+            uint64_t target = std::min(std::min(wake, next_render),
+                                       next_event_poll);
             total_cycles = target;
             do_tick(); // time jump: process all timer events up to new time
             if (total_cycles >= next_event_poll) {

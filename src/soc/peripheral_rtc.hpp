@@ -1,5 +1,4 @@
 #pragma once
-#include "tick.hpp"
 #include <cstdint>
 
 class Bus;
@@ -39,14 +38,14 @@ class InterruptController;
 //
 // Alarm functionality is not implemented; alarm registers are storage-only.
 // ============================================================================
-class ClockTimer : public ITickable {
+class ClockTimer {
 public:
     void attach(Bus& bus, InterruptController& intc, const ClockControl& clk);
 
-    void tick(uint64_t cpu_cycles) override;
+    void tick(uint64_t cpu_cycles);
 
     // Returns the next cycle at which the prescaler advances.
-    uint64_t next_wake_cycle() const override { return next_prescaler_cycle_; }
+    uint64_t next_wake_cycle() const { return next_prescaler_cycle_; }
 
     // Reset register + scheduling state; preserves attach-bound pointers.
     void reset();

@@ -8,9 +8,17 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # if gcc or clang, enable all warnings and pedantic mode
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(-Wall -Wextra -Wpedantic)
+    if(USE_PROFILER)
+        add_compile_options(-pg)
+        add_link_options(-pg)
+    endif()
 # msvc
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
     add_compile_options(/W4 /permissive- /utf-8)
+    if(USE_PROFILER)
+        add_compile_options(/Gh /GH)
+        add_link_options(/profile)
+    endif()
 endif()
 
 # Keep frame pointers in RelWithDebInfo so that profilers (perf, Instruments)

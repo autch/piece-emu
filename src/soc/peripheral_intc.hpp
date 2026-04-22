@@ -83,8 +83,12 @@ public:
 
     // Notify INTC that the CPU's current PSR.IL is `il`.  Used by poll()
     // to decide which sources can be delivered right now without invoking
-    // CPU state directly.
-    void set_current_il(uint32_t il) { current_il_ = il; }
+    // CPU state directly.  If IL drops, we mark the poll state dirty so the
+    // next poll() re-scans for sources that were blocked by the old IL.
+    void set_current_il(uint32_t il) {
+        if (il < current_il_) poll_dirty_ = true;
+        current_il_ = il;
+    }
 
 private:
     static constexpr uint32_t BASE_ADDR = 0x040260;
@@ -100,6 +104,15 @@ private:
 
     // Last-known PSR.IL from the CPU (updated before each poll()).
     uint32_t current_il_ = 0;
+
+    // Fast-skip flag for poll().  Set whenever anything that could change
+    // poll()'s decision happens: a new ISR bit is raised, the CPU's IL
+    // drops, or the kernel writes to an ISR / IEN / priority register.
+    // poll() clears it once it has evaluated the full state.  Without this,
+    // poll() scans all 41 IRQ sources on every do_tick() (~20M times/sec)
+    // even though the state almost never changes between ticks — this was
+    // ~25% of total runtime in gprof profiling of silent apps.
+    bool poll_dirty_ = true;
 
     // Per-source descriptor
     struct SrcInfo {

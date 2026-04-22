@@ -97,6 +97,7 @@ void InterruptController::reset()
     for (auto& r : regs_) r = 0;
     for (auto& v : level_override_) v = -1;
     current_il_ = 0;
+    poll_dirty_ = true;
 }
 
 void InterruptController::attach(Bus& bus,
@@ -176,6 +177,13 @@ void InterruptController::io_write(uint32_t off, uint32_t addr, uint16_t val)
         write_byte(static_cast<int>(off),     static_cast<uint8_t>(val));
         write_byte(static_cast<int>(off) + 1, static_cast<uint8_t>(val >> 8));
     }
+
+    // Any write to priority (0..13), IEN (16..23), or ISR (32..39) regs
+    // may change the poll decision.  Writes to IDMA/RESET regs (48..63) do
+    // not affect interrupt delivery; skip the dirty mark for them.
+    int end = static_cast<int>(off) + 2;
+    if ((off < 14) || (off >= 16 && off < 24) || (end > 32 && off < 40))
+        poll_dirty_ = true;
 }
 
 void InterruptController::raise(IrqSource src, int level_override)
@@ -189,6 +197,12 @@ void InterruptController::raise(IrqSource src, int level_override)
 
 void InterruptController::poll()
 {
+    // Fast path: nothing has changed since the last poll, so the decision
+    // will be the same.  ISR writes, raise(), and set_current_il() (on an
+    // IL drop) mark poll_dirty_.  This skip captures >99% of do_tick()
+    // calls when no interrupts are pending.
+    if (!poll_dirty_) return;
+
     // Scan ISR registers for set bits.  For each, check IEN; if enabled
     // and priority > current_il_, deliver.  Higher priority wins when
     // multiple sources are pending.
@@ -214,6 +228,10 @@ void InterruptController::poll()
             best_override = ov;
         }
     }
+    // State has been fully evaluated.  Any future change (new raise(),
+    // register write, IL drop) will re-mark dirty.
+    poll_dirty_ = false;
+
     if (best < 0) return;
     if (best_override < 0 && level_override_[best] >= 0) {
         // preserve override for possible future polls if delivery is rejected
@@ -229,6 +247,11 @@ void InterruptController::try_deliver(IrqSource src, int level_override)
 
     // Set ISR flag unconditionally
     regs_[info.isr_byte] |= static_cast<uint8_t>(1 << info.isr_bit);
+
+    // A new pending source: the next poll() must re-scan even if we can
+    // deliver right now (deferred-trap path may reject and leave the source
+    // pending for a later poll).
+    poll_dirty_ = true;
 
     // Check interrupt enable
     if (!(regs_[info.ien_byte] & (1 << info.ien_bit))) return;

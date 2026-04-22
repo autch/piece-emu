@@ -1,5 +1,4 @@
 #pragma once
-#include "tick.hpp"
 #include "peripheral_intc.hpp"
 #include <cstdint>
 
@@ -36,7 +35,7 @@ class ClockControl;
 // P/ECE kernel usage:
 //   Timer 0 CRA at ~1 ms period drives the context-switch / system tick.
 // ============================================================================
-class Timer16bit : public ITickable {
+class Timer16bit {
 public:
     explicit Timer16bit(int ch) : ch_(ch) {}
 
@@ -44,12 +43,20 @@ public:
                 InterruptController& intc,
                 const ClockControl& clk);
 
-    void tick(uint64_t cpu_cycles) override;
-    uint64_t next_wake_cycle() const override;
+    void tick(uint64_t cpu_cycles);
+    uint64_t next_wake_cycle() const;
 
     // Reset register state and cached clock data.  Preserves channel
     // number, attach-time bus/intc/clk pointers.
     void reset();
+
+    // Wire up a PRUN-tracking bit in a parent-owned mask.  The parent
+    // (PiecePeripherals) iterates only set bits to skip stopped timers
+    // without loading their state.  Must be called before attach().
+    void set_active_tracker(uint32_t* mask, uint32_t bit) {
+        active_mask_ = mask;
+        active_bit_  = bit;
+    }
 
     // Direct register access (for unit tests)
     uint16_t cra() const { return cra_; }
@@ -84,6 +91,12 @@ private:
     // Recompute cached_wake_ from current state.  Called by tick() and by
     // register-write I/O handlers.
     void refresh_wake();
+
+    // PRUN-tracking: update the parent-owned mask whenever PRUN flips.
+    void update_active(bool now_running);
+
+    uint32_t* active_mask_ = nullptr;
+    uint32_t  active_bit_  = 0;
 
     // Helper: raise CRA or CRB interrupt for this channel
     void raise_cra();

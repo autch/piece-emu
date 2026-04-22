@@ -1,5 +1,4 @@
 #pragma once
-#include "tick.hpp"
 #include "peripheral_intc.hpp"
 #include <cstdint>
 
@@ -25,7 +24,7 @@ class ClockControl;
 // Clock source: ClockControl::t8_clock_hz(ch)
 // Interrupt:    InterruptController::IrqSource::T8_UF0 + ch
 // ============================================================================
-class Timer8bit : public ITickable {
+class Timer8bit {
 public:
     explicit Timer8bit(int ch) : ch_(ch) {}
 
@@ -33,12 +32,18 @@ public:
                 InterruptController& intc,
                 const ClockControl& clk);
 
-    void tick(uint64_t cpu_cycles) override;
-    uint64_t next_wake_cycle() const override;
+    void tick(uint64_t cpu_cycles);
+    uint64_t next_wake_cycle() const;
 
     // Reset register state and cached clock data.  Preserves channel
     // number, attach-time bus/intc/clk pointers.
     void reset();
+
+    // Wire up a PRUN-tracking bit in a parent-owned mask.
+    void set_active_tracker(uint32_t* mask, uint32_t bit) {
+        active_mask_ = mask;
+        active_bit_  = bit;
+    }
 
     // Direct register access (for unit tests)
     uint8_t ctl() const { return ctl_; }
@@ -47,6 +52,9 @@ public:
 
 private:
     int ch_;
+    uint32_t* active_mask_ = nullptr;
+    uint32_t  active_bit_  = 0;
+    void update_active(bool now_running);
     uint8_t ctl_ = 0;
     uint8_t rld_ = 0;
     uint8_t ptd_ = 0;

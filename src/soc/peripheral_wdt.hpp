@@ -1,5 +1,4 @@
 #pragma once
-#include "tick.hpp"
 #include <cstdint>
 #include <functional>
 
@@ -27,14 +26,14 @@ class ClockControl;
 //   This matches piemu's behaviour (NMI once per main loop iteration ≈ 1 ms).
 //   The emulator never performs an actual reset.
 // ============================================================================
-class WatchdogTimer : public ITickable {
+class WatchdogTimer {
 public:
     // assert_nmi: called with (trap_no=7, level=0) when NMI fires
     void attach(Bus& bus, const ClockControl& clk,
                 std::function<void(int, int)> assert_nmi);
 
-    void tick(uint64_t cpu_cycles) override;
-    uint64_t next_wake_cycle() const override {
+    void tick(uint64_t cpu_cycles);
+    uint64_t next_wake_cycle() const {
         if (!(ewd_ & 0x02)) return UINT64_MAX;
         return next_nmi_cycle_;
     }
