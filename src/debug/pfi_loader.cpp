@@ -117,5 +117,5 @@ PfiInfo pfi_load(Bus& bus, const std::string& path)
                  path.c_str(), static_cast<unsigned>(total),
                  hdr.sysinfo.sys_clock, hdr.sysinfo.hard_ver, hdr.sysinfo.bios_ver);
 
-    return PfiInfo{hdr.sysinfo, total};
+    return PfiInfo{hdr.sysinfo, total, hdr.offset};
 }

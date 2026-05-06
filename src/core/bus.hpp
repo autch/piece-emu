@@ -1,8 +1,10 @@
 #pragma once
 #include "diag.hpp"
+#include "flash_device.hpp"
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -73,7 +75,18 @@ public:
     // External memory sizes — set by constructor; vary by hardware revision.
     // Standard P/ECE: sram=256 KB, flash=1 MB.  2 MB Flash mod also exists.
     std::size_t sram_size()  const { return sram_.size(); }
-    std::size_t flash_size() const { return flash_.size(); }
+    std::size_t flash_size() const { return flash_device_->size(); }
+
+    // Access the installed flash device.  Always non-null after construction.
+    FlashDevice*       flash_device()       { return flash_device_.get(); }
+    const FlashDevice* flash_device() const { return flash_device_.get(); }
+
+    // Replace the flash device (e.g., swap the default FlatFlashRom for an
+    // Sst39vf with full CFI / write semantics).  Must be called BEFORE
+    // pfi_load() so that the new device receives the loaded image.
+    void install_flash_device(std::unique_ptr<FlashDevice> dev) {
+        flash_device_ = std::move(dev);
+    }
 
     // External area wait cycles (default: 3 for SRAM, 3 for Flash)
     int sram_wait  = 3;
@@ -143,7 +156,7 @@ public:
 private:
     std::vector<uint8_t> iram_;
     std::vector<uint8_t> sram_;
-    std::vector<uint8_t> flash_;
+    std::unique_ptr<FlashDevice> flash_device_;
     std::vector<IoHandler> io_handlers_; // indexed by (addr - IOREG_BASE) / 2
 
     // Shadow SRAM: parallel to sram_, one PC entry per byte.

@@ -74,6 +74,20 @@ add_subdirectory(host)
 add_subdirectory(tools)
 
 # ---------------------------------------------------------------------------
+# piece_writeback — host-side PFI writeback (4 KB sector pwrite + fsync).
+# Pure POSIX/Win32 file I/O + steady-clock debounce; depends only on
+# piece_core (FlashDevice abstract base).  Both piece-emu (headless) and
+# piece-emu-system link this and decide whether to enable writeback at
+# runtime via CLI.
+# ---------------------------------------------------------------------------
+add_library(piece_writeback STATIC
+    system/platform_file.cpp
+    system/pfi_writeback.cpp
+)
+target_include_directories(piece_writeback PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/system)
+target_link_libraries(piece_writeback PUBLIC piece_core)
+
+# ---------------------------------------------------------------------------
 # piece-emu — bare-metal / headless CLI frontend (POSIX only, no SDL)
 # ---------------------------------------------------------------------------
 add_executable(piece-emu main.cpp)
@@ -82,6 +96,7 @@ target_link_libraries(piece-emu PRIVATE
     piece_board
     piece_soc
     piece_core
+    piece_writeback
     CLI11::CLI11
 )
 
@@ -126,9 +141,22 @@ if(GTest_FOUND)
         GTest::gtest_main
     )
 
+    add_executable(piece_board_tests
+        tests/unit/test_flash_sst39vf.cpp
+        tests/unit/test_pfi_writeback.cpp
+    )
+    target_link_libraries(piece_board_tests PRIVATE
+        piece_board
+        piece_writeback
+        piece_soc
+        piece_core
+        GTest::gtest_main
+    )
+
     include(GoogleTest)
     gtest_discover_tests(piece_core_tests)
     gtest_discover_tests(piece_soc_tests)
+    gtest_discover_tests(piece_board_tests)
 else()
     message(WARNING "Google Test not found — skipping unit tests (piece_unit_tests). "
                     "Run cmake with -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake")
@@ -159,6 +187,7 @@ if(SDL3_FOUND)
         piece_soc
         piece_debug
         piece_core
+        piece_writeback
         CLI11::CLI11
     )
 

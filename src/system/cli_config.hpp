@@ -39,5 +39,9 @@ struct Config {
     std::vector<std::string> wp_write_specs, wp_read_specs, wp_rw_specs;
     std::vector<std::string> break_specs;
 
+    // Flash writeback (system frontend defaults to ON; --read-only disables).
+    bool                     read_only           = false;
+    int                      writeback_debounce_ms = 2000;
+
     static Config parse(int argc, char** argv);
 };

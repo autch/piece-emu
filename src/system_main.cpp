@@ -27,8 +27,10 @@
 #include "cpu.hpp"
 #include "debug_utils.hpp"
 #include "diag.hpp"
+#include "flash_sst39vf.hpp"
 #include "gdb_rsp.hpp"
 #include "pfi_loader.hpp"
+#include "pfi_writeback.hpp"
 #include "piece_peripherals.hpp"
 #include "cpu_runner.hpp"
 #include "lcd_renderer.hpp"
@@ -56,6 +58,8 @@
 #endif
 
 #include <atomic>
+#include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <memory>
 #include <set>
@@ -68,6 +72,24 @@
 // Wrapped in a struct so std::make_unique can own the 11 KB block —
 // unique_ptr<uint8_t[88][128]> is not directly expressible.
 namespace { struct FrameSnap { uint8_t p[88][128] = {}; }; }
+
+// Signal-driven quit flag for SIGINT / SIGTERM handlers (file scope so the
+// handler can reach it without trampolines).  Main loop polls it each
+// iteration alongside the regular `quit_flag` set from SDL.
+namespace {
+    std::atomic<bool>* g_quit_flag = nullptr;
+
+    extern "C" void on_terminate_signal(int /*sig*/) {
+        if (g_quit_flag) g_quit_flag->store(true, std::memory_order_relaxed);
+    }
+
+    uint64_t steady_now_us() {
+        using namespace std::chrono;
+        return static_cast<uint64_t>(
+            duration_cast<microseconds>(
+                steady_clock::now().time_since_epoch()).count());
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -155,12 +177,30 @@ int main(int argc, char** argv)
             frame_buf->push(periph->lcd);
         };
 
+        // Install the SST39VF flash device BEFORE pfi_load so that the
+        // image lands directly in the model's memory.  We pick the part
+        // whose capacity covers the PFI's declared flash size.
+        bus->install_flash_device(
+            std::make_unique<Sst39vf>(
+                Sst39vf::for_min_bytes(cfg.flash_size)));
+
         // Load PFI flash image
         PfiInfo pfi_info = pfi_load(*bus, cfg.pfi_path);
-        (void)pfi_info;
         uint32_t entry = bus->read32(Bus::FLASH_BASE);
         std::fprintf(stderr, "PFI loaded, reset vector=0x%06X\n", entry);
         cpu->state.pc = entry;
+
+        // Flash writeback (system frontend defaults to ON; --read-only
+        // suppresses host-file mutation).  Hooks into the Sst39vf dirty
+        // callback; the main loop calls poll() each iteration.
+        auto writeback = std::make_unique<PfiWriteback>();
+        writeback->attach(
+            bus->flash_device(),
+            cfg.read_only ? PfiWriteback::Mode::ReadOnly
+                          : PfiWriteback::Mode::WriteBack,
+            cfg.pfi_path,
+            pfi_info.flash_offset_in_pfi,
+            cfg.writeback_debounce_ms);
 
         // SDL3 renderer (must stay on this thread for SDL_RenderPresent)
         auto renderer = std::make_unique<LcdRenderer>();
@@ -211,6 +251,13 @@ int main(int argc, char** argv)
         // Shared state: buttons and quit signal
         std::atomic<bool>     quit_flag{false};
         std::atomic<uint16_t> shared_buttons{0xFFFFu};
+
+        // Install SIGINT / SIGTERM handlers so Ctrl-C from the terminal
+        // (or kill(1)) walks the same shutdown path as Esc / window close
+        // — including the writeback shutdown_flush below.
+        g_quit_flag = &quit_flag;
+        std::signal(SIGINT,  on_terminate_signal);
+        std::signal(SIGTERM, on_terminate_signal);
 
         // CPU thread.  CpuRunner is an aggregate with reference members +
         // a default-initialised std::atomic<int> reset_request{0} at the
@@ -284,10 +331,20 @@ int main(int argc, char** argv)
             if (frame_buf->take(px))
                 renderer->render(px);
 
+            // Flash writeback debounce check (cheap; runs ~60 Hz).
+            writeback->poll(steady_now_us());
+
             SDL_DelayNS(16'666'667ULL); // ~60 fps polling cadence
         }
 
         cpu_thread.join();
+
+        // Final flush after the CPU thread has stopped — guarantees the
+        // host PFI file reflects every committed program/erase before
+        // the process exits.  No-op when --read-only.
+        writeback->shutdown_flush();
+        g_quit_flag = nullptr;
+
         audio->close();
         audio_log->close();
         renderer->destroy();

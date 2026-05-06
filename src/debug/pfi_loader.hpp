@@ -14,8 +14,10 @@ class Bus;
 // ============================================================================
 
 struct PfiInfo {
-    SYSTEMINFO  sys_info;   // hardware info parsed from the PFI header
-    std::size_t flash_size; // bytes loaded into bus flash
+    SYSTEMINFO  sys_info;            // hardware info parsed from the PFI header
+    std::size_t flash_size;          // bytes loaded into bus flash
+    uint32_t    flash_offset_in_pfi; // PFIHEADER.offset — byte offset of the
+                                     //   flash image within the PFI file
 };
 
 // Read just the PFI header and return SYSTEMINFO.

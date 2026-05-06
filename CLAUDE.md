@@ -122,8 +122,10 @@ ninja -C build-src
 ./build-src/piece-emu --wp-write 0xADDR[:SIZE] <elf>       # SRAM write watchpoint
 ./build-src/piece-emu --wp-read / --wp-rw <elf>            # read / read-write watchpoint
 ./build-src/piece-emu --break-at 0xADDR <elf>              # dump regs when PC == ADDR
+./build-src/piece-emu --pfi piece.pfi --enable-flash-writeback   # opt-in: persist flash writes to host PFI
 
-./build-src/piece-emu-system --pfi images/old/piece.pfi    # full-system SDL3 run
+./build-src/piece-emu-system --pfi images/old/piece.pfi    # full-system SDL3 run (writeback ON by default)
+./build-src/piece-emu-system --pfi ... --read-only         # disable host PFI mutation
 ./build-src/piece-emu-system --pfi ... --gdb-port 1234     # with async GDB RSP (LLDB-compatible)
 ./build-src/piece-emu-system --pfi ... --gdb-debug         # trace RSP packet traffic
 
@@ -131,11 +133,12 @@ ninja -C build-src test                                    # run all unit tests 
 ```
 
 Build artifacts (static libraries, layered):
-- `libpiece_core.a` — S1C33000 CPU, BCU, disassembler (`src/core/`)
+- `libpiece_core.a` — S1C33000 CPU, BCU, disassembler, **`FlashDevice`** abstract base + `FlatFlashRom` (`src/core/`)
 - `libpiece_soc.a`  — S1C33209 on-chip peripherals: INTC, ClkCtl, T8/T16, PortCtrl, BcuArea, WDT, RTC (`src/soc/`)
-- `libpiece_debug.a` — ELF loader, semihosting, GDB RSP stub (`src/debug/`)
-- `libpiece_board.a` — board external devices: S6B0741 LCD controller (`src/board/`); links `piece_soc` publicly
+- `libpiece_debug.a` — ELF loader, PFI loader, semihosting, GDB RSP stub (`src/debug/`)
+- `libpiece_board.a` — board external devices: S6B0741 LCD controller, **SST 39VF400A / 39VF160 NOR flash** (`src/board/`); links `piece_soc` publicly
 - `libpiece_host.a` — SDL3 LCD renderer and event polling (`src/host/`); stub INTERFACE when SDL3 absent
+- `libpiece_writeback.a` — host PFI write-back (`PlatformFile` POSIX/Win32 abstraction + `PfiWriteback` debounce/flush); depends only on `piece_core`
 - `piece-emu` — headless CLI frontend (POSIX only, no SDL)
 - `piece-emu-system` — SDL3 full-system frontend (built when SDL3 found via vcpkg)
 
@@ -223,6 +226,15 @@ Fast-path inner loop activates when: no `--trace`, no break addresses, no `--max
 `Bus::read16/fetch16` bypass `classify()` with inline fast paths: SRAM (`addr - SRAM_BASE < SRAM_WINDOW`) then Flash/open-bus (`addr >= FLASH_BASE`).
 `Cpu::h_mac` has O(1) open-bus fast path for pdwait (pointers at 0x1000000 always return 0xFFFF).
 `Timer16bit::tick()` O(1): `N = (tc+counts)/cra`, `final_tc = (tc+counts)%cra`; ISR is level-triggered (raise once == N times).
+`Bus::fetch16` reads `flash_device_->mem_ptr()` directly (no virtual call); data `read16/read32` bypass the virtual call when `flash_device_->in_read_mode()` is true (Sst39vf is in Normal command mode — the common case). Only writes and CFI/Software-ID reads pay the virtual dispatch.
+
+## Flash Writeback (host PFI mutation)
+
+Two `FlashDevice` implementations live in the codebase: `FlatFlashRom` (read-only, default — used for bare-metal ELF runs and `piece-emu` without `--enable-flash-writeback`) and `Sst39vf` (full SST 39VF400A / 39VF160 model with CFI/Software-ID/Word-Program/Sector-Erase/Block-Erase/Chip-Erase + 4 KB sector dirty tracking). Bus owns `std::unique_ptr<FlashDevice>` and frontends call `Bus::install_flash_device(make_unique<Sst39vf>(...))` before `pfi_load()` for a writable boot.
+
+`PfiWriteback` is the debounced flusher. CPU thread sets `last_dirty_us_` (atomic) on each clean→dirty transition via the Sst39vf callback. Main thread calls `PfiWriteback::poll(now_us)` each frame; when `now_us - last_dirty_us_ >= --writeback-debounce-ms` (default 2000 ms), it `pwrite`s every dirty 4 KB sector to the host PFI at `header.offset + sector_idx * 0x1000`, then `fsync`s. SIGINT/SIGTERM/normal exit invoke `shutdown_flush()` which bypasses the debounce. Sector-granular `pwrite` (no atomic-rename) is justified by the 4 KB locality of OS crash-consistency.
+
+`piece-emu-system` defaults to writeback ON; `piece-emu` defaults to OFF (test idempotency) with `--enable-flash-writeback` opting in. `--read-only` always wins. Sst39vf state-machine errors are lenient (Normal-state recovery, no abort) — only the kernel drives flash writes, so strict checking does not pay off (see `feedback_flash_writeback.md`).
 
 ## S1C33000 CPU Critical Facts
 

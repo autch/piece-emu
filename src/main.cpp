@@ -3,7 +3,9 @@
 #include "debug_utils.hpp"
 #include "diag.hpp"
 #include "elf_loader.hpp"
+#include "flash_sst39vf.hpp"
 #include "pfi_loader.hpp"
+#include "pfi_writeback.hpp"
 #include "gdb_rsp.hpp"
 #include "semihosting.hpp"
 #include "peripheral_intc.hpp"
@@ -19,11 +21,33 @@
 
 #include <CLI/CLI.hpp>
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <csignal>
 #include <cstdio>
+#include <memory>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+// Signal-driven quit flag for SIGINT / SIGTERM (file scope so the handler
+// can reach it).  Used in the headless main loop alongside semihosting's
+// stop_requested.
+namespace {
+    std::atomic<bool>* g_quit_flag = nullptr;
+
+    extern "C" void on_terminate_signal(int /*sig*/) {
+        if (g_quit_flag) g_quit_flag->store(true, std::memory_order_relaxed);
+    }
+
+    uint64_t steady_now_us() {
+        using namespace std::chrono;
+        return static_cast<uint64_t>(
+            duration_cast<microseconds>(
+                steady_clock::now().time_since_epoch()).count());
+    }
+}
 
 int main(int argc, char** argv) {
     CLI::App app{"P/ECE emulator (S1C33209)"};
@@ -40,6 +64,9 @@ int main(int argc, char** argv) {
     std::size_t              flash_size = 0x080000; // 512 KB
     std::vector<std::string> wp_write_specs, wp_read_specs, wp_rw_specs;
     std::vector<std::string> break_specs;
+    bool                     enable_flash_writeback = false;
+    bool                     read_only              = false;
+    int                      writeback_debounce_ms  = 2000;
 
     // Exactly one of --pfi or elf must be provided.
     auto* elf_opt = app.add_option("elf", elf_path, "ELF binary to load and run")
@@ -76,6 +103,15 @@ int main(int argc, char** argv) {
         "Read/write watchpoint: ADDR or ADDR:SIZE (hex, repeatable)");
     app.add_option("--break-at", break_specs,
         "Dump registers when PC == ADDR (hex, repeatable)");
+    app.add_flag("--enable-flash-writeback", enable_flash_writeback,
+        "Push kernel-driven flash mutations back to the host PFI file "
+        "(headless default: OFF — preserves test idempotency)");
+    app.add_flag("--read-only", read_only,
+        "Force read-only flash even if --enable-flash-writeback is set");
+    app.add_option("--writeback-debounce-ms", writeback_debounce_ms,
+        "Idle interval (ms) before dirty flash sectors are flushed "
+        "(default: 2000)")
+        ->check(CLI::Range(0, 60000));
 
     CLI11_PARSE(app, argc, argv);
 
@@ -164,14 +200,29 @@ int main(int argc, char** argv) {
 
         // Load firmware: either a bare-metal ELF or a full PFI flash image.
         uint32_t entry;
+        auto writeback = std::make_unique<PfiWriteback>();
         if (!pfi_path.empty()) {
+            // Install Sst39vf BEFORE pfi_load so writes go through the
+            // CFI state machine and dirty tracking is wired from boot.
+            bus.install_flash_device(
+                std::make_unique<Sst39vf>(
+                    Sst39vf::for_min_bytes(flash_size)));
+
             // Full-system mode: load PFI flash image, boot from reset vector.
             // The reset vector at 0xC00000 contains a 32-bit jump target.
             PfiInfo pfi_info = pfi_load(bus, pfi_path);
-            (void)pfi_info; // sys_info available for future use
             // Read the reset vector (first 4 bytes of flash = word at 0xC00000)
             entry = bus.read32(Bus::FLASH_BASE);
             std::fprintf(stderr, "PFI loaded, reset vector=0x%06X\n", entry);
+
+            // Headless writeback is opt-in to preserve test idempotency.
+            // --read-only takes precedence over --enable-flash-writeback.
+            const auto wb_mode = (enable_flash_writeback && !read_only)
+                ? PfiWriteback::Mode::WriteBack
+                : PfiWriteback::Mode::ReadOnly;
+            writeback->attach(bus.flash_device(), wb_mode, pfi_path,
+                              pfi_info.flash_offset_in_pfi,
+                              writeback_debounce_ms);
         } else if (!elf_path.empty()) {
             entry = elf_load(bus, elf_path);
             std::fprintf(stderr, "Loaded %s, entry=0x%06X\n", elf_path.c_str(), entry);
@@ -182,9 +233,22 @@ int main(int argc, char** argv) {
 
         cpu.state.pc = entry;
 
+        // Install SIGINT / SIGTERM handlers so a Ctrl-C still walks the
+        // PfiWriteback shutdown_flush path on the way out.
+        std::atomic<bool> signal_quit{false};
+        g_quit_flag = &signal_quit;
+        std::signal(SIGINT,  on_terminate_signal);
+        std::signal(SIGTERM, on_terminate_signal);
+
+        auto on_exit = [&]() {
+            writeback->shutdown_flush();
+            g_quit_flag = nullptr;
+        };
+
         if (use_gdb) {
             GdbRsp gdb(bus, cpu, gdb_port, debug_rsp);
             gdb.serve();
+            on_exit();
             return semihosting_test_result() != 0 ? 1 : 0;
         }
 
@@ -198,10 +262,15 @@ int main(int argc, char** argv) {
 
         bool limit_hit = false;
 
+        auto sig_quit = [&]() {
+            return signal_quit.load(std::memory_order_relaxed);
+        };
+
         for (;;) {
-            if (stop_requested) break;
+            if (stop_requested || sig_quit()) break;
             // Inner loop: normal CPU execution until HLT/SLEEP or fault.
-            while (!cpu.state.in_halt && !cpu.state.fault && !stop_requested) {
+            while (!cpu.state.in_halt && !cpu.state.fault && !stop_requested
+                   && !sig_quit()) {
                 if (trace) {
                     std::string dis = cpu.disasm(cpu.state.pc);
                     std::fprintf(stderr, "  %s\n", dis.c_str());
@@ -221,7 +290,12 @@ int main(int argc, char** argv) {
                 }
             }
 
-            if (limit_hit || cpu.state.fault || stop_requested) break;
+            // Writeback debounce check at every HLT round-trip — cheap,
+            // and keeps the host file roughly in sync during long runs
+            // without paying the cost on every CPU instruction.
+            writeback->poll(steady_now_us());
+
+            if (limit_hit || cpu.state.fault || stop_requested || sig_quit()) break;
 
             // HLT/SLEEP: fast-forward to the earliest pending peripheral event.
             uint64_t wake = UINT64_MAX;
@@ -253,11 +327,14 @@ int main(int argc, char** argv) {
         if (cpu.state.fault) {
             std::fprintf(stderr, "Faulted after %llu cycles\n",
                 (unsigned long long)total_cycles);
+            on_exit();
             return 1;
         }
 
         std::fprintf(stderr, "Halted after %llu cycles\n",
             (unsigned long long)total_cycles);
+
+        on_exit();
 
         int result = semihosting_test_result();
         if (result == 0)  return 0;

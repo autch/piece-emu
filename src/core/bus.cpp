@@ -32,15 +32,15 @@ static uint32_t normalize_io(uint32_t addr) {
 Bus::Bus(std::size_t sram_size, std::size_t flash_size)
     : iram_(IRAM_SIZE, 0)
     , sram_(sram_size, 0)
-    , flash_(flash_size, 0xFF)
+    , flash_device_(std::make_unique<FlatFlashRom>(flash_size))
     , io_handlers_(IOHANDLER_SPAN / 2) // covers 0x040000–0x07FFFF (IO + semihosting)
     , shadow_sram_(sram_size, 0xFFFF'FFFFu)
 {}
 
 void Bus::load_flash(uint32_t offset, const uint8_t* data, std::size_t size) {
-    if (offset + size > flash_.size())
+    if (offset + size > flash_device_->size())
         throw std::runtime_error("ELF segment exceeds flash capacity");
-    std::memcpy(flash_.data() + offset, data, size);
+    flash_device_->load_image(offset, data, size);
 }
 
 void Bus::load_sram(uint32_t offset, const uint8_t* data, std::size_t size) {
@@ -68,7 +68,7 @@ Bus::Region Bus::classify(uint32_t addr) const {
     // behave as open-bus (required for kernel SRAM size detection).
     if (addr >= SRAM_BASE && addr < SRAM_BASE + SRAM_WINDOW) return Region::SRAM;
     // Flash second: ROM data reads (0xC00000+).
-    if (addr >= FLASH_BASE && addr < FLASH_BASE + flash_.size()) return Region::FLASH;
+    if (addr >= FLASH_BASE && addr < FLASH_BASE + flash_device_->size()) return Region::FLASH;
     // Area 1 (peripherals) and semihosting share Region::IO.
     // Caller normalizes to canonical address before indexing io_handlers_.
     if (addr >= AREA1_BASE && addr < SEMIHOST_BASE + SEMIHOST_SIZE) return Region::IO;
@@ -95,7 +95,7 @@ uint8_t Bus::read8(uint32_t addr) {
         }
     case Region::FLASH:
         cycles += flash_wait + 1;
-        return flash_[addr - FLASH_BASE];
+        return flash_device_->read8(addr - FLASH_BASE);
     case Region::IO: {
         uint32_t norm = normalize_io(addr);
         uint32_t idx  = (norm - IOREG_BASE) / 2;
@@ -135,9 +135,15 @@ uint16_t Bus::read16(uint32_t addr) {
     // The P/ECE kernel uses addresses like 0x1000000 (above Flash_end) as open-bus
     // for busy-wait loops (pdwait).  Detecting this here avoids classify() entirely.
     if (addr >= FLASH_BASE) {
-        if (addr < FLASH_BASE + flash_.size()) {
+        if (addr < FLASH_BASE + flash_device_->size()) {
             cycles += flash_wait + 1;
-            return le16(&flash_[addr - FLASH_BASE]);
+            // Fast path: in Normal command mode, read raw memory directly.
+            // (CFI / Software-ID modes are rare; pay the virtual call only there.)
+            if (flash_device_->in_read_mode()) {
+                const uint8_t* p = flash_device_->mem_ptr() + (addr - FLASH_BASE);
+                return le16(p);
+            }
+            return flash_device_->read16(addr - FLASH_BASE);
         }
         return 0xFFFF; // beyond Flash end → open-bus (e.g. 0x1000000 in pdwait)
     }
@@ -154,7 +160,7 @@ uint16_t Bus::read16(uint32_t addr) {
     case Region::FLASH:
         // Already handled by fast path 2 above; unreachable in practice.
         cycles += flash_wait + 1;
-        return le16(&flash_[addr - FLASH_BASE]);
+        return flash_device_->read16(addr - FLASH_BASE);
     case Region::IO: {
         uint32_t idx = (normalize_io(addr) - IOREG_BASE) / 2;
         if (idx < io_handlers_.size() && io_handlers_[idx].read)
@@ -187,7 +193,17 @@ uint32_t Bus::read32(uint32_t addr) {
         }
     case Region::FLASH:
         cycles += (flash_wait + 1) * 2;
-        return le32(&flash_[addr - FLASH_BASE]);
+        // Word reads from flash bypass the device's command-state machine —
+        // any kernel that needs CFI / Software-ID reads them as halfwords.
+        if (flash_device_->in_read_mode()) {
+            const uint8_t* p = flash_device_->mem_ptr() + (addr - FLASH_BASE);
+            return le32(p);
+        }
+        {
+            uint16_t lo = flash_device_->read16(addr     - FLASH_BASE);
+            uint16_t hi = flash_device_->read16(addr + 2 - FLASH_BASE);
+            return uint32_t(lo) | (uint32_t(hi) << 16);
+        }
     case Region::IO: {
         // 32-bit IO read: two 16-bit reads
         uint16_t lo = read16(addr);
@@ -217,6 +233,17 @@ void Bus::write8(uint32_t addr, uint8_t val) {
             sram_[addr - SRAM_BASE] = val;
         }
         return;
+    case Region::FLASH:
+        cycles += flash_wait + 2;
+        // The SST39VF chip is wired x16; the kernel always writes halfwords
+        // when driving the command state machine.  A stray byte write here
+        // is forwarded as a halfword with the byte replicated; this matches
+        // what the bus would put on DQ15-DQ0 in practice.  Real silicon
+        // would treat this as an invalid write; our state machine is
+        // lenient and simply ignores the resulting bogus command.
+        flash_device_->write16(addr - FLASH_BASE,
+            static_cast<uint16_t>(val) | static_cast<uint16_t>(val) << 8);
+        return;
     case Region::IO: {
         uint32_t norm = normalize_io(addr);
         uint32_t idx  = (norm - IOREG_BASE) / 2;
@@ -227,7 +254,7 @@ void Bus::write8(uint32_t addr, uint8_t val) {
         return;
     }
     default:
-        return; // writes to FLASH / unknown are silently dropped
+        return; // writes to unknown regions are silently dropped
     }
 }
 
@@ -252,6 +279,10 @@ void Bus::write16(uint32_t addr, uint16_t val) {
             }
             put_le16(&sram_[addr - SRAM_BASE], val);
         }
+        return;
+    case Region::FLASH:
+        cycles += flash_wait + 2;
+        flash_device_->write16(addr - FLASH_BASE, val);
         return;
     case Region::IO: {
         uint32_t idx = (normalize_io(addr) - IOREG_BASE) / 2;
@@ -286,6 +317,13 @@ void Bus::write32(uint32_t addr, uint32_t val) {
             put_le32(&sram_[addr - SRAM_BASE], val);
         }
         return;
+    case Region::FLASH:
+        // Two halfword writes — the SST chip is x16.  Each can drive an
+        // independent step of the command state machine.
+        cycles += (flash_wait + 2) * 2;
+        flash_device_->write16(addr     - FLASH_BASE, static_cast<uint16_t>(val));
+        flash_device_->write16(addr + 2 - FLASH_BASE, static_cast<uint16_t>(val >> 16));
+        return;
     case Region::IO:
         write16(addr,     static_cast<uint16_t>(val));
         write16(addr + 2, static_cast<uint16_t>(val >> 16));
@@ -301,8 +339,12 @@ uint16_t Bus::fetch16(uint32_t addr) {
     addr &= 0x0FFF'FFFF;
     addr &= ~1u;
     // Flash first: P/ECE code runs almost entirely from Flash (0xC00000+).
-    if (addr >= FLASH_BASE && addr < FLASH_BASE + flash_.size())
-        return le16(&flash_[addr - FLASH_BASE]);
+    // Always read raw memory: the CPU never fetches instructions while the
+    // flash device is in CFI / Software-ID mode (the kernel exits before
+    // the next code-flash access), so bypassing the virtual call here is
+    // safe and removes a per-instruction indirect branch.
+    if (addr >= FLASH_BASE && addr < FLASH_BASE + flash_device_->size())
+        return le16(flash_device_->mem_ptr() + (addr - FLASH_BASE));
     // Internal RAM (startup trampolines, kernel, interrupt vectors)
     if (addr < IRAM_SIZE)
         return le16(&iram_[addr]);

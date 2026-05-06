@@ -8,7 +8,7 @@
 
 本エミュレータの主目的は、P/ECE 向け LLVM/Clang バックエンドの開発を支援するデバッグ環境の提供である。実機は量産機でありデバッグ機能を持たず、コンパイラのコード生成バグの調査にはエミュレータ上での逆アセンブル・ステップ実行・ブレークポイントが不可欠である。
 
-P2-4 完了時点で副次目標にも到達している: `piece.pfi` からカーネルをブートし、LCD 表示・ボタン入力・PWM サウンド出力を伴ってゲームを遊べる状態にある。USB / 赤外線 / MMC / Flash 書き込み / ADC / IDMA は未実装だが、P/EMU と同様に市販ゲームを起動・操作・発音できる。
+P2-5 完了時点で副次目標にも到達している: `piece.pfi` からカーネルをブートし、LCD 表示・ボタン入力・PWM サウンド出力を伴ってゲームを遊べ、PFFS への書き込み（セーブデータ等）はホスト PFI ファイルへ書き戻される。USB / 赤外線 / MMC / ADC / IDMA は未実装だが、P/EMU と同様に市販ゲームを起動・操作・発音・セーブできる。
 
 ### 設計原則
 
@@ -71,7 +71,8 @@ $ lldb
 - **P2-2 実装済み**: SDL3 フルシステムフロントエンド（`piece-emu-system`）。LCD 表示（S6B0741）、ボタン入力（K5/K6）、非同期 GDB RSP 対応。
 - **P2-3 実装済み**: マルチスレッド構成（SDL メイン / CPU / GDB / SDL Audio）。F5/Shift+F5 リセット、F12 PNG スクリーンショット。
 - **P2-4 実装済み**: PWM サウンド出力（HSDMA Ch1 → SPSC リング → `SDL_AudioStream`、32 kHz / int16）。
-- **P2-5 以降未実装**: Flash 書き込み（SST39VF400A コマンド）、ADC スタブ、IDMA、USB (PDIUSBD12)、赤外線通信、MMC/SD。
+- **P2-5 実装済み**: Flash 書き込み（SST 39VF400A / 39VF160 CFI ステートマシン、4KB セクタ dirty 追跡）+ PFI 書き戻し（`pwrite` + `fsync`、debounce、SIGINT/SIGTERM 対応、POSIX/Win32 抽象）。`piece-emu-system` は writeback 既定 ON、`piece-emu` は `--enable-flash-writeback` で opt-in。
+- **P2-6 以降未実装**: ADC スタブ、IDMA、USB (PDIUSBD12)、赤外線通信、MMC/SD、overlay PFI（base から copy-on-write）。
 
 ```
 # SDL3 フルシステムフロントエンド
@@ -98,7 +99,12 @@ libpiece_soc.a   (src/soc/) → piece_core
 
 libpiece_board.a (src/board/) → piece_soc
 ├── S6B0741 LCD コントローラ
-└── (将来: NAND Flash, PDIUSBD12 USB)
+├── SST 39VF400A / 39VF160 NOR フラッシュ（Sst39vf : FlashDevice）
+└── (将来: PDIUSBD12 USB)
+
+libpiece_writeback.a (src/system/) → piece_core
+├── PlatformFile  — POSIX (pwrite/fsync) / Win32 (WriteFile+OVERLAPPED/FlushFileBuffers) 抽象
+└── PfiWriteback  — 4KB セクタ単位の dirty flush、debounce、SIGINT/SIGTERM 対応 shutdown
 
 libpiece_host.a  (src/host/) → piece_board, SDL3
 ├── LcdRenderer  — S6B0741 VRAM → SDL3 テクスチャ
@@ -113,12 +119,12 @@ libpiece_debug.a (src/debug/) → piece_core
 └── GDB RSP（sync / async 両モード）
 
 piece-emu          (ベアメタルモード実行バイナリ)
-├── piece_debug + piece_board + piece_soc + piece_core
-├── CLI フロントエンド（--wp-write/--wp-read/--wp-rw/--break-at）
+├── piece_debug + piece_board + piece_soc + piece_core + piece_writeback
+├── CLI フロントエンド（--wp-write/--wp-read/--wp-rw/--break-at/--enable-flash-writeback/--read-only）
 └── 外部依存: なし（POSIXのみ）
 
 piece-emu-system   (システムモード実行バイナリ)
-├── piece_host + piece_debug + piece_board + piece_soc + piece_core
+├── piece_host + piece_debug + piece_board + piece_soc + piece_core + piece_writeback
 ├── SDL3 GUI フロントエンド（LCD 表示・ボタン入力・PWM サウンド・60fps）
 ├── 4 スレッド構成:
 │   ├── piece-sdl (main)  — SDL3 イベント + LcdRenderer::render()
@@ -1120,7 +1126,7 @@ MAME の設計で特に倣うべきは、CPUデバイスとメモリ空間の抽
 | **P2-2** ✅ | ボタン入力 | SDL3 キーイベント → K5D/K6D マッピング（piece-emu-system 内） |
 | **P2-3** ✅ | マルチスレッド構成 | SDL メイン / CPU / GDB / SDL Audio の 4 スレッド。共有状態は mutex / atomic / SPSC リング |
 | **P2-4** ✅ | PWMサウンド | HSDMA Ch1 EN 0→1 で PWM サンプル一括読み出し → SPSC リング → `SDL_AudioStream`（32 kHz / int16）。Ch1 完了 IRQ は `cnt*(cpu_hz/32000)` サイクル後に配信、IL=1 で再入回避 |
-| **P2-5** | Flash書き込み | SST39VF400A コマンドシーケンス、PFI書き戻し |
+| **P2-5** ✅ | Flash書き込み | SST 39VF400A / 39VF160 CFI ステートマシン（Word-Program / Sector-Erase / Block-Erase / Chip-Erase / Software ID / CFI Query / Short Exit）、4KB セクタ dirty 追跡、`pwrite` + `fsync` での PFI 書き戻し、`--writeback-debounce-ms` debounce、SIGINT/SIGTERM 対応、POSIX/Win32 抽象 |
 | **P3** | USB (PDIUSBD12) | 将来拡張 |
 | **P3** | 赤外線通信 | 将来拡張 |
 | **P3** | MMC/SD | 将来拡張 |

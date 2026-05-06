@@ -2,11 +2,11 @@
 
 [アクアプラス P/ECE](https://aquaplus.jp/piece/) の diagnostic エミュレータです。実機では無視される無効な操作を積極的に検知して警告します。GDB RSP とセミホスティングにより、コンパイラ開発のデバッグ基盤として機能します。
 
-未実装デバイスはあるものの（USB / 赤外線 / MMC / Flash 書き込み / ADC / IDMA）、`piece.pfi` からカーネルブートしてゲームが起動・操作・発音する状態に到達しています。
+未実装デバイスはあるものの（USB / 赤外線 / MMC / ADC / IDMA）、`piece.pfi` からカーネルブートしてゲームが起動・操作・発音し、PFFS への書き込み（セーブデータ等）はホスト PFI ファイルへ書き戻される状態に到達しています。
 
 A diagnostic emulator for the [Aquaplus P/ECE](https://aquaplus.jp/piece/) handheld. Actively detects and warns about invalid operations that real hardware silently ignores. GDB RSP and semihosting make it a debugging foundation for compiler development.
 
-Not every peripheral is emulated (USB, IrDA, MMC, flash write, ADC, IDMA), but games boot from `piece.pfi`, display on the LCD, accept input, and produce audio.
+Not every peripheral is emulated (USB, IrDA, MMC, ADC, IDMA), but games boot from `piece.pfi`, display on the LCD, accept input, produce audio, and persist PFFS writes (save data) back to the host PFI file.
 
 ---
 
@@ -65,15 +65,16 @@ All ISA classes (0–6) implemented. Includes disassembler, PSR flags, EXT immed
 | HSDMA（高速 DMA）| 0x048220 | 4 チャネル、Ch0 = LCD 転送（SIF3 連動）、Ch1 = PWM サンプル一括読み出し |
 | Sound（PWM 音声）| 0x048220 Ch1 経由 | HSDMA Ch1 EN 0→1 で PWM サンプルを SPSC リングに格納、Ch1 完了 IRQ (vec 23) を `cnt*(cpu_hz/32000)` サイクル後に配信（IL=1、再入回避） |
 | S6B0741 LCD | SIF3 経由 | コマンド/データデコード、128×88 VRAM、4 階調ピクセル変換 |
+| SST 39VF400A / 39VF160 | 0xC00000+ | CFI ステートマシン（Word-Program / Sector-Erase / Block-Erase / Chip-Erase / Software ID / CFI Query / Short Exit）、4KB セクタ dirty 追跡、ホスト PFI への書き戻し（POSIX `pwrite`+`fsync` / Win32 `WriteFile`+`FlushFileBuffers`、debounce、SIGINT/SIGTERM 対応）|
 
 ### 未実装 / 不完全 / Not Yet Implemented
 
 - USB デバイス / USB device
 - 赤外線通信（IrDA）/ IrDA
 - MMC カードインタフェース / MMC card interface
-- フラッシュ書き込み（読み出しのみ動作）/ Flash write (read-only)
 - ADC / ADC
 - IDMA（内部 DMA、HSDMA は実装済み）/ IDMA (HSDMA is implemented)
+- Overlay PFI（base から copy-on-write で書き込みは別ファイルへ）/ Overlay PFI (copy-on-write writes to a separate file)
 
 ---
 
@@ -151,7 +152,27 @@ lldb
 
 # ゲームパッドの A/B を P/ECE 物理配置（右=A, 左=B）に合わせる
 ./build-src/piece-emu-system --swap-ab images/old/piece.pfi
+
+# PFI 書き戻しを抑止（読み出し専用）/ Suppress host PFI writeback
+./build-src/piece-emu-system --read-only images/old/piece.pfi
+
+# 書き戻しまでの idle 時間を変更（既定 2000ms）/ Change writeback debounce
+./build-src/piece-emu-system --writeback-debounce-ms 5000 images/old/piece.pfi
 ```
+
+### Flash 書き戻し / Flash Writeback
+
+`piece-emu-system` はカーネルが PFFS（セーブデータなど）に書き込んだ内容を、4KB セクタ単位でホストの PFI ファイルへ書き戻します。最後の書き込みから `--writeback-debounce-ms` ミリ秒（既定 2000ms）が経過したタイミングで `pwrite` + `fsync` を実行し、終了時には残った差分を強制 flush します。Ctrl-C / SIGTERM でも同じ shutdown 経路を踏むため、未保存のセーブデータが失われません。
+
+`--read-only` を指定するとホストファイルは一切変更されません（書き込みは RAM 上では成功しますが、終了と同時に破棄されます）。
+
+`piece-emu-system` writes back PFFS-level kernel writes (save data, etc.) to the host PFI file at 4 KB sector granularity. After `--writeback-debounce-ms` ms (default 2000 ms) of idle time following the most recent write, the dirty sectors are flushed via `pwrite` + `fsync`; any remaining dirty sectors are force-flushed at exit. Ctrl-C / SIGTERM walk the same shutdown path, so save data is not lost.
+
+Pass `--read-only` to suppress host-file mutation entirely (writes still succeed in RAM but are discarded at exit).
+
+ヘッドレスフロントエンド `piece-emu` ではテストの冪等性を確保するため、Flash 書き戻しは既定で **無効** です。`--enable-flash-writeback` で有効化できます（`--read-only` が常に優先）。
+
+The headless `piece-emu` frontend keeps flash writeback **disabled by default** so test runs remain idempotent. Use `--enable-flash-writeback` to opt in (`--read-only` always wins).
 
 ### キー操作 / Keyboard Controls
 

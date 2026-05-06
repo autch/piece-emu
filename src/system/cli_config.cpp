@@ -48,6 +48,13 @@ Config Config::parse(int argc, char** argv)
         "Read/write watchpoint: ADDR or ADDR:SIZE (hex, repeatable)");
     app.add_option("--break-at", cfg.break_specs,
         "Dump registers when PC == ADDR (hex, repeatable)");
+    app.add_flag("--read-only", cfg.read_only,
+        "Do not write any flash mutations back to the host PFI file "
+        "(default: writeback enabled in piece-emu-system)");
+    app.add_option("--writeback-debounce-ms", cfg.writeback_debounce_ms,
+        "Idle interval (ms) before dirty flash sectors are flushed to the "
+        "PFI file (default: 2000)")
+        ->check(CLI::Range(0, 60000));
 
     try { app.parse(argc, argv); }
     catch (const CLI::ParseError& e) { std::exit(app.exit(e)); }
