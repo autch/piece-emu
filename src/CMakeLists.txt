@@ -202,3 +202,13 @@ if(SDL3_FOUND)
 else()
     message(STATUS "SDL3 not found — piece-emu-system target skipped")
 endif()
+
+# ---------------------------------------------------------------------------
+# piece_libretro — libretro core (.so) frontend
+# Vcpkg / SDL3 / GTest 非依存。デフォルト ON、PIECE_NO_LIBRETRO=ON で無効化。
+# ---------------------------------------------------------------------------
+option(PIECE_NO_LIBRETRO "Disable libretro core build" OFF)
+
+if(NOT PIECE_NO_LIBRETRO)
+    add_subdirectory(libretro)
+endif()

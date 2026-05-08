@@ -1,6 +1,7 @@
 #pragma once
 #include "pfi_format.h"   // SYSTEMINFO, PFIHEADER, FLASH_TOP, PFI_IMAGE_OFFSET
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 class Bus;
@@ -29,3 +30,10 @@ SYSTEMINFO pfi_read_sysinfo(const std::string& path);
 // Validates the header signature and SYSTEMINFO.size field.
 // Throws std::runtime_error on failure.
 PfiInfo pfi_load(Bus& bus, const std::string& path);
+
+// Same as pfi_read_sysinfo / pfi_load but reads from an in-memory blob.
+// Used by the libretro core, where the frontend hands us the file contents
+// as data + length rather than a path.  Throws std::runtime_error on any
+// malformed header or bounds violation.
+SYSTEMINFO pfi_read_sysinfo_blob(const std::uint8_t* data, std::size_t len);
+PfiInfo    pfi_load_blob(Bus& bus, const std::uint8_t* data, std::size_t len);
