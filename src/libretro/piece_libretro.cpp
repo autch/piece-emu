@@ -16,6 +16,7 @@
 #include "cpu.hpp"
 #include "piece_peripherals.hpp"
 #include "flash_sst39vf.hpp"
+#include "pfi_format.h"
 #include "pfi_loader.hpp"
 
 #include <algorithm>
@@ -23,6 +24,7 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <vector>
 
 namespace {
 
@@ -43,6 +45,31 @@ std::uint32_t                     g_cached_cpu_hz   = 24'000'000;
 
 // HSDMA Ch0 completion sets this; retro_run() consumes and clears.
 bool                              g_frame_pending  = false;
+
+// ---- SAVE_RAM (PFI-formatted .srm) -----------------------------------------
+// We expose flash via RETRO_MEMORY_SAVE_RAM as a complete PFI image
+// (header + flash bytes), not as raw flash.  This lets `pfar`, `fusepfi`,
+// and any other host-side PFI tool open the .srm directly to inspect or
+// edit its PFFS contents — simpler and more useful than introducing a
+// separate "PFFS-only" file format and teaching every tool about it.
+//
+// Layout of g_srm_buffer:
+//   [ 0 .. g_srm_header_bytes )  — copied verbatim from the original PFI
+//                                  (PFIHEADER + any padding the source
+//                                  used; the stored `offset` field is
+//                                  preserved unchanged).
+//   [ g_srm_header_bytes .. )    — flash image, kept in lockstep with
+//                                  Sst39vf::mem_ via the per-frame sync
+//                                  at the end of retro_run().
+std::vector<std::uint8_t>         g_srm_buffer;
+std::size_t                       g_srm_header_bytes = 0;
+std::size_t                       g_srm_flash_bytes  = 0;
+
+// Set in retro_load_game; the next retro_run() copies the header-area-
+// excluded portion of g_srm_buffer back into Sst39vf::mem_ (i.e. honours
+// any .srm overlay the frontend applied between retro_load_game and
+// retro_run).  Cleared after the first sync.
+bool                              g_srm_overlay_pending = false;
 
 // ---- Display ---------------------------------------------------------------
 constexpr int FB_W = 128;
@@ -192,6 +219,10 @@ RETRO_API void retro_deinit(void)
     g_total_cycles    = 0;
     g_next_timer_wake = 0;
     g_frame_pending   = false;
+    g_srm_buffer.clear();
+    g_srm_header_bytes    = 0;
+    g_srm_flash_bytes     = 0;
+    g_srm_overlay_pending = false;
 }
 
 RETRO_API void retro_set_controller_port_device(unsigned, unsigned) { /* fixed JOYPAD */ }
@@ -244,6 +275,26 @@ RETRO_API bool retro_load_game(const struct retro_game_info* game)
     g_next_timer_wake    = 0;
     g_frame_pending      = false;
 
+    // ---- Build the PFI-formatted .srm buffer --------------------------
+    // We re-use the original PFI header bytes verbatim (signature, the
+    // declared offset, and SYSTEMINFO).  This guarantees `pfar` and
+    // friends can open the .srm without any version-detection hacks.
+    // Header span = original `offset` field, clamped to at least
+    // sizeof(PFIHEADER) and at most the whole input blob.
+    PFIHEADER hdr_in{};
+    std::memcpy(&hdr_in, data, sizeof(PFIHEADER));
+    g_srm_header_bytes = std::max<std::size_t>(sizeof(PFIHEADER),
+                                               hdr_in.offset);
+    if (g_srm_header_bytes > game->size)
+        g_srm_header_bytes = game->size;
+    g_srm_flash_bytes  = flash_size;
+    g_srm_buffer.assign(g_srm_header_bytes + g_srm_flash_bytes, 0);
+    std::memcpy(g_srm_buffer.data(), data, g_srm_header_bytes);
+    std::memcpy(g_srm_buffer.data() + g_srm_header_bytes,
+                g_bus->flash_device()->mem_ptr(),
+                g_srm_flash_bytes);
+    g_srm_overlay_pending = true;
+
     // Publish the input descriptor table so the frontend can show
     // P/ECE-specific labels in its input menu.
     if (environ_cb)
@@ -267,6 +318,10 @@ RETRO_API void retro_unload_game(void)
     g_total_cycles    = 0;
     g_next_timer_wake = 0;
     g_frame_pending   = false;
+    g_srm_buffer.clear();
+    g_srm_header_bytes    = 0;
+    g_srm_flash_bytes     = 0;
+    g_srm_overlay_pending = false;
 }
 
 RETRO_API void retro_reset(void)
@@ -283,6 +338,30 @@ RETRO_API void retro_reset(void)
 RETRO_API void retro_run(void)
 {
     if (!g_bus || !g_cpu || !g_periph) return;
+
+    // -------- 0) First-run .srm overlay ----------------------------------
+    // Between retro_load_game and the first retro_run, the frontend may
+    // have written a stored .srm into our SAVE_RAM buffer.  If the buffer
+    // still carries a valid PFI header, copy its flash region back into
+    // Sst39vf::mem_ so the running app sees the saved state.  A garbled
+    // header (sig mismatch, etc.) is treated as "no overlay" and we keep
+    // the fresh PFI initial image already loaded.
+    if (g_srm_overlay_pending) {
+        g_srm_overlay_pending = false;
+        if (g_srm_buffer.size() >= g_srm_header_bytes + g_srm_flash_bytes) {
+            PFIHEADER incoming{};
+            std::memcpy(&incoming, g_srm_buffer.data(), sizeof(incoming));
+            const bool sig_ok =
+                (incoming.signature & 0xffffff00u) ==
+                ((uint32_t)'P' << 24 | (uint32_t)'F' << 16 | (uint32_t)'I' << 8);
+            if (sig_ok && incoming.sysinfo.size == 32) {
+                g_bus->flash_device()->load_image(
+                    0u,
+                    g_srm_buffer.data() + g_srm_header_bytes,
+                    g_srm_flash_bytes);
+            }
+        }
+    }
 
     // -------- 1) Input → K5/K6 -------------------------------------------
     if (input_poll_cb) input_poll_cb();
@@ -350,15 +429,15 @@ RETRO_API void retro_run(void)
             const bool sleep = (g_cpu->state.halt_mode == CpuState::HaltMode::Slp);
             std::uint64_t wake = sleep ? g_periph->sleep_wake_cycle()
                                        : g_periph->next_wake_cycle();
-            if (wake == UINT64_MAX || wake >= target) {
-                // No wake within this frame — skip to frame end.  Button
-                // input via set_k5/k6 was already published; the CPU stays
-                // halted until the next retro_run() picks up a new event.
-                g_total_cycles = target;
-            } else {
-                g_total_cycles = wake;
-                do_tick();
-            }
+            // Always advance to a tick point AND call do_tick — the CPU
+            // unblocks only when intc.poll() asserts a trap, and that lives
+            // inside do_tick.  Skipping do_tick on a halt event would defer
+            // IRQ delivery until the next frame's first tick (~16 ms),
+            // shifting kernel polling timing enough to break PFFS writes.
+            const std::uint64_t advance_to =
+                (wake == UINT64_MAX) ? target : std::min(wake, target);
+            g_total_cycles = advance_to;
+            do_tick();
         }
     }
 
@@ -379,6 +458,18 @@ RETRO_API void retro_run(void)
     if (video_cb)
         video_cb(g_video_pixels, FB_W, FB_H, FB_W * sizeof(uint16_t));
 
+    // -------- 3.5) Sync Sst39vf::mem_ → SAVE_RAM buffer ------------------
+    // The frontend may pull SAVE_RAM at any moment (autosave interval,
+    // close-content event, etc.) without notifying the core.  Mirror
+    // mem_ into the buffer's flash region every frame; the header bytes
+    // we wrote in retro_load_game stay untouched.  At 512 KB / 60 fps
+    // this is ~30 MB/s, negligible against typical memory bandwidth.
+    if (!g_srm_buffer.empty()) {
+        std::memcpy(g_srm_buffer.data() + g_srm_header_bytes,
+                    g_bus->flash_device()->mem_ptr(),
+                    g_srm_flash_bytes);
+    }
+
     // -------- 4) Audio drain → audio_batch_cb ---------------------------
     if (audio_batch_cb) {
         std::size_t got = g_periph->sound.pop(g_audio_mono, AUDIO_DRAIN);
@@ -398,11 +489,29 @@ RETRO_API size_t retro_serialize_size(void)                           { return 0
 RETRO_API bool   retro_serialize(void*, size_t)                       { return false; }
 RETRO_API bool   retro_unserialize(const void*, size_t)               { return false; }
 
-// ---- Cheats / memory / region (unused) -------------------------------------
+// ---- Cheats / memory / region ----------------------------------------------
 RETRO_API void   retro_cheat_reset(void)                              { /* no-op */ }
 RETRO_API void   retro_cheat_set(unsigned, bool, const char*)         { /* no-op */ }
-RETRO_API void*  retro_get_memory_data(unsigned)                      { return nullptr; }
-RETRO_API size_t retro_get_memory_size(unsigned)                      { return 0; }
+
+// SAVE_RAM: expose the flash device as a complete PFI image
+// (PFIHEADER + flash bytes), not as raw flash.  This makes the .srm
+// file directly readable by `pfar`, `fusepfi`, and other host-side
+// PFI tools, so saved state can be inspected and edited offline as a
+// regular PFI.  The header is copied verbatim from the original PFI
+// in retro_load_game; flash bytes are mirrored from Sst39vf::mem_ at
+// the end of every retro_run().
+RETRO_API void* retro_get_memory_data(unsigned id)
+{
+    if (id != RETRO_MEMORY_SAVE_RAM) return nullptr;
+    return g_srm_buffer.empty() ? nullptr : g_srm_buffer.data();
+}
+
+RETRO_API size_t retro_get_memory_size(unsigned id)
+{
+    if (id != RETRO_MEMORY_SAVE_RAM) return 0;
+    return g_srm_buffer.size();
+}
+
 RETRO_API unsigned retro_get_region(void)                             { return RETRO_REGION_NTSC; }
 
 } // extern "C"

@@ -6,7 +6,7 @@ corename = "piece-emu"
 categories = "Emulator"
 license = "MIT"
 permissions = ""
-display_version = "0.2"
+display_version = "0.3"
 
 # Hardware Information
 manufacturer = "Aquaplus"
@@ -20,7 +20,7 @@ savestate = "false"
 cheats = "false"
 input_descriptors = "true"
 memory_descriptors = "false"
-libretro_saves = "false"
+libretro_saves = "true"
 hw_render = "false"
 
 # BIOS / Firmware
