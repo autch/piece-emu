@@ -55,6 +55,63 @@ std::uint8_t  g_lcd_pixels[FB_H][FB_W];
 // 4-level grayscale → RGB565 (0=white, 1=light, 2=dark, 3=black).
 constexpr uint16_t kPalette[4] = { 0xFFFF, 0xAD55, 0x52AA, 0x0000 };
 
+// ---- Core options ----------------------------------------------------------
+// Cached value of "piece_swap_ab".  Re-read whenever the frontend signals
+// a variable update (RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE).
+bool g_swap_ab = false;
+
+// Core option definitions (v2).  The frontend keeps pointers to these,
+// so they must outlive the core (static const is correct).
+const retro_core_option_v2_definition kOptionDefs[] = {
+    {
+        "piece_swap_ab",
+        "Swap A/B Buttons",
+        nullptr,
+        "Swap the mapping between RetroArch's A/B buttons and the P/ECE A/B "
+        "buttons.  Off (default): A=P/ECE A, B=P/ECE B (RetroArch standard).  "
+        "On: A=P/ECE B, B=P/ECE A.",
+        nullptr,
+        nullptr,
+        {
+            { "off", "Off (RetroArch standard)" },
+            { "on",  "On (Swapped)" },
+            { nullptr, nullptr },
+        },
+        "off",
+    },
+    { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, {{nullptr, nullptr}}, nullptr },
+};
+
+const retro_core_options_v2 kOptionsV2 = {
+    nullptr,        // categories — none for now
+    const_cast<retro_core_option_v2_definition*>(kOptionDefs),
+};
+
+// ---- Input descriptors -----------------------------------------------------
+// Static array describing how each JOYPAD button maps onto the P/ECE.
+// `description` strings must remain valid until retro_unload_game() returns.
+const retro_input_descriptor kInputDescriptors[] = {
+    { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP,     "D-Pad Up"    },
+    { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN,   "D-Pad Down"  },
+    { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,   "D-Pad Left"  },
+    { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT,  "D-Pad Right" },
+    { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A,      "A Button"    },
+    { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B,      "B Button"    },
+    { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START,  "Start"       },
+    { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Select"      },
+    { 0, 0, 0, 0, nullptr },
+};
+
+// Read "piece_swap_ab" from the frontend and cache it in g_swap_ab.
+void update_core_options()
+{
+    if (!environ_cb) return;
+    retro_variable var = { "piece_swap_ab", nullptr };
+    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+        g_swap_ab = (std::strcmp(var.value, "on") == 0);
+    }
+}
+
 // ---- Audio -----------------------------------------------------------------
 // Drain buffer for one retro_run() iteration.  At 32 kHz / 60 fps the per-
 // frame mono budget is ~533 samples; we size for 4× headroom in case the
@@ -76,7 +133,21 @@ RETRO_API unsigned retro_api_version(void)
     return RETRO_API_VERSION;
 }
 
-RETRO_API void retro_set_environment(retro_environment_t cb)         { environ_cb     = cb; }
+RETRO_API void retro_set_environment(retro_environment_t cb)
+{
+    environ_cb = cb;
+
+    // Register core options.  Only V2 is supported here — V2 has been the
+    // recommended path since RetroArch 1.9 (2021), and falling back to V0/V1
+    // would just clutter the file.  If the frontend doesn't accept V2 we
+    // simply ship without options (g_swap_ab stays false).
+    unsigned options_version = 0;
+    if (cb(RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION, &options_version)
+        && options_version >= 2) {
+        cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2,
+           const_cast<retro_core_options_v2*>(&kOptionsV2));
+    }
+}
 RETRO_API void retro_set_video_refresh(retro_video_refresh_t cb)     { video_cb       = cb; }
 RETRO_API void retro_set_audio_sample(retro_audio_sample_t)          { /* unused — we use audio_batch */ }
 RETRO_API void retro_set_audio_sample_batch(retro_audio_sample_batch_t cb) { audio_batch_cb = cb; }
@@ -172,6 +243,14 @@ RETRO_API bool retro_load_game(const struct retro_game_info* game)
     g_total_cycles       = 0;
     g_next_timer_wake    = 0;
     g_frame_pending      = false;
+
+    // Publish the input descriptor table so the frontend can show
+    // P/ECE-specific labels in its input menu.
+    if (environ_cb)
+        environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS,
+                   const_cast<retro_input_descriptor*>(kInputDescriptors));
+
+    update_core_options();
     return true;
 }
 
@@ -208,6 +287,15 @@ RETRO_API void retro_run(void)
     // -------- 1) Input → K5/K6 -------------------------------------------
     if (input_poll_cb) input_poll_cb();
 
+    // Pick up frontend-side option changes.  GET_VARIABLE_UPDATE is cheap
+    // (a single bool) and only triggers update_core_options() when the user
+    // actually changed a setting.
+    bool opts_dirty = false;
+    if (environ_cb
+        && environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &opts_dirty)
+        && opts_dirty)
+        update_core_options();
+
     std::uint8_t k5 = 0xFF, k6 = 0xFF;
     if (input_state_cb) {
         auto down = [](unsigned id) -> bool {
@@ -218,8 +306,13 @@ RETRO_API void retro_run(void)
         if (down(RETRO_DEVICE_ID_JOYPAD_LEFT))   k6 &= ~(1 << 1);
         if (down(RETRO_DEVICE_ID_JOYPAD_DOWN))   k6 &= ~(1 << 2);
         if (down(RETRO_DEVICE_ID_JOYPAD_UP))     k6 &= ~(1 << 3);
-        if (down(RETRO_DEVICE_ID_JOYPAD_B))      k6 &= ~(1 << 4);
-        if (down(RETRO_DEVICE_ID_JOYPAD_A))      k6 &= ~(1 << 5);
+        // A/B mapping respects the swap_ab core option.
+        const unsigned id_to_p_a = g_swap_ab ? RETRO_DEVICE_ID_JOYPAD_B
+                                             : RETRO_DEVICE_ID_JOYPAD_A;
+        const unsigned id_to_p_b = g_swap_ab ? RETRO_DEVICE_ID_JOYPAD_A
+                                             : RETRO_DEVICE_ID_JOYPAD_B;
+        if (down(id_to_p_b)) k6 &= ~(1 << 4); // P/ECE B = K64
+        if (down(id_to_p_a)) k6 &= ~(1 << 5); // P/ECE A = K65
         // K5: bit3=SELECT bit4=START
         if (down(RETRO_DEVICE_ID_JOYPAD_SELECT)) k5 &= ~(1 << 3);
         if (down(RETRO_DEVICE_ID_JOYPAD_START))  k5 &= ~(1 << 4);
