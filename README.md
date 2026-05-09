@@ -216,6 +216,14 @@ The default layout follows **XInput face labels** (A label → P/ECE A, B label 
 
 ---
 
+## libretro コアとして使う / Running as a libretro Core
+
+RetroArch などの libretro 互換フロントエンドから P/ECE エミュレータを起動できる libretro コア版（`piece_libretro.so` / `.dll` / `.dylib`）も同梱しています。インストール手順・入力マッピング・コアオプション・セーブデータ（`.srm` は完全な PFI ファイル）の詳細は [`src/libretro/README.md`](src/libretro/README.md) を参照してください。
+
+A libretro core packaging (`piece_libretro.so` / `.dll` / `.dylib`) is also bundled, letting you run the P/ECE emulator from RetroArch or any other libretro-compatible frontend. See [`src/libretro/README.md`](src/libretro/README.md) for installation, input mapping, core options, and save data details (the `.srm` file is itself a complete PFI image).
+
+---
+
 ## ホストユーティリティ / Host Utilities
 
 エミュレータ本体とは別に、P/ECE フラッシュイメージ（PFI）を操作するためのコマンドラインツールが `src/tools/` に含まれています。
@@ -313,6 +321,7 @@ piece-emu/
 │   ├── board/                 libpiece_board.a — 外付けデバイス（S6B0741 LCD 等）/ Board external devices
 │   ├── debug/                 libpiece_debug.a — ELF/PFI ローダ・セミホスティング・GDB RSP
 │   ├── host/                  libpiece_host.a — SDL3 フロントエンド（LCD・Audio・Screenshot）/ SDL3 frontend
+│   ├── libretro/              piece_libretro.so/.dll — libretro コア / libretro core
 │   ├── system/                piece-emu-system 内部モジュール（CPU runner・CLI 解析ほか）/ system binary internals
 │   ├── tools/                 ホストユーティリティ（mkpfi, pfar, ripper）/ Host utilities
 │   ├── tests/unit/            C++ ユニットテスト（GTest, core + soc）/ C++ unit tests
@@ -387,6 +396,7 @@ ninja -C build-src
 ビルド成果物 / Build artifacts:
 - `build-src/piece-emu` — ヘッドレス CLI（ベアメタル + PFI）/ Headless CLI (bare-metal + PFI)
 - `build-src/piece-emu-system` — SDL3 フルシステムフロントエンド（SDL3 必須）/ SDL3 full-system frontend
+- `build-src/libretro/piece_libretro.{so,dll,dylib}` — libretro コア（vcpkg / SDL3 非依存。`-DPIECE_NO_LIBRETRO=ON` で無効化可能）/ libretro core (no vcpkg/SDL3 dependency; disable with `-DPIECE_NO_LIBRETRO=ON`)
 - `build-src/libpiece_core.a` — CPU コア・BCU・逆アセンブラ / CPU core, BCU, disassembler
 - `build-src/libpiece_soc.a` — S1C33209 オンチップ周辺デバイス / On-chip peripherals
 - `build-src/libpiece_debug.a` — ELF ローダ・セミホスティング・GDB RSP / ELF loader, semihosting, GDB RSP
