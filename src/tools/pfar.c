@@ -3,9 +3,11 @@
  *
  * Manage files inside a PFI flash image's PFFS filesystem.
  *
- * Usage: pfar piece.pfi -a|-d|-e|-l|-v [file [...]]
+ * Usage: pfar piece.pfi -a|-A|-d|-e|-l|-v [file [...]]
  *
- *   -a  Add file(s) to PFFS
+ *   -a  Add file(s) to PFFS (PFFS name = disk basename)
+ *   -A  Add one file under a chosen PFFS name:
+ *         pfar piece.pfi -A <local_path> <pffs_name>
  *   -d  Delete file(s) from PFFS
  *   -e  Extract file(s) from PFFS to disk
  *   -l  List PFFS directory (default)
@@ -45,7 +47,7 @@ int main(int argc, char **argv)
         }
         switch (*(p + 1))
         {
-        case 'a': case 'd': case 'e': case 'l': case 'v':
+        case 'a': case 'A': case 'd': case 'e': case 'l': case 'v':
             action = *(p + 1);
             break;
         default:
@@ -73,7 +75,41 @@ int main(int argc, char **argv)
 
 static int usage(void)
 {
-    fprintf(stderr, "Usage: pfar piece.pfi [-adelv] [file [...]]\n");
+    fprintf(stderr,
+        "pfar — P/ECE Flash Image ARchiver\n"
+        "\n"
+        "Manage files inside the PFFS filesystem of a P/ECE flash image.\n"
+        "Without an action flag, the directory is listed (same as -l).\n"
+        "\n"
+        "Usage:\n"
+        "  pfar <piece.pfi> [action] [args...]\n"
+        "\n"
+        "Actions:\n"
+        "  -l                          List PFFS directory entries (default)\n"
+        "  -v                          Show only PFI system info header\n"
+        "  -a <file> [file ...]        Add file(s) to PFFS using each disk\n"
+        "                              file's basename as the PFFS name\n"
+        "  -A <local_path> <pffs_name> Add exactly one file under a chosen\n"
+        "                              PFFS name (no '/' allowed in name)\n"
+        "  -e <pffs_name> [name ...]   Extract file(s) from PFFS to the\n"
+        "                              current directory (same name)\n"
+        "  -d <pffs_name> [name ...]   Delete file(s) from PFFS\n"
+        "\n"
+        "Notes:\n"
+        "  * Add / delete actions rewrite <piece.pfi> in place.\n"
+        "  * PFFS filenames are limited to the on-disk DIRECTORY format\n"
+        "    (bare filenames; no leading directory components).\n"
+        "  * The action flag may appear before or after <piece.pfi>; the\n"
+        "    first non-flag argument is treated as the PFI path.\n"
+        "\n"
+        "Examples:\n"
+        "  pfar piece.pfi                          # list directory\n"
+        "  pfar piece.pfi -v                       # show SYSTEMINFO only\n"
+        "  pfar piece.pfi -a build/bwings.pex      # add as 'bwings.pex'\n"
+        "  pfar piece.pfi -A build/bwings.pex startup.pex\n"
+        "                                          # add under 'startup.pex'\n"
+        "  pfar piece.pfi -e startup.pex           # extract one file\n"
+        "  pfar piece.pfi -d old.pex bad.sco       # delete two files\n");
     return EXIT_FAILURE;
 }
 
@@ -109,6 +145,33 @@ static int run(PFI *pfi, const char *pfi_path, char action, char **args)
             fflush(stdout);
             PFISave(pfi, pfi_path);
             printf("done\n");
+        }
+        break;
+
+    case 'A':
+        // -A <local_path> <pffs_name>: exactly two args, one file added
+        // under a caller-chosen PFFS name.  Reject malformed counts up
+        // front so the PFI never gets a half-written DIRECTORY entry.
+        if (!args || !args[0] || !args[1] || args[2])
+        {
+            fprintf(stderr,
+                "-A requires exactly two arguments: <local_path> <pffs_name>\n");
+            return usage();
+        }
+        printf("Adding %s as %s...", args[0], args[1]);
+        fflush(stdout);
+        if (PFFSAddFileAs(pfi, args[0], args[1]))
+        {
+            printf("ok\n");
+            printf("Writing modifications to %s...", pfi_path);
+            fflush(stdout);
+            PFISave(pfi, pfi_path);
+            printf("done\n");
+        }
+        else
+        {
+            printf("failed, aborting\n");
+            return -1;
         }
         break;
 

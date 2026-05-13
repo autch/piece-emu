@@ -217,17 +217,39 @@ static DIRECTORY *FindFreeDir(PFI *pfi)
 
 int PFFSAddFile(PFI *pfi, const char *filename)
 {
+    return PFFSAddFileAs(pfi, filename, NULL);
+}
+
+int PFFSAddFileAs(PFI *pfi, const char *filename, const char *pffs_name_in)
+{
     FILE            *fp;
     uint32_t         size;
     pffsMASTERBLOCK  new_msb;
     pffsMASTERBLOCK *old_msb = pfi->msb;
     int              nsectors, old_nsectors, r = 0;
     DIRECTORY       *dir;
+    const char      *pffs_name;
 
-    // Strip any leading directory components: PFFS only stores bare filenames.
-    // fopen() still receives the original path so relative/absolute paths work.
-    const char *pffs_name = strrchr(filename, '/');
-    pffs_name = pffs_name ? pffs_name + 1 : filename;
+    // Resolve the PFFS-side name.  Caller override takes precedence; an
+    // empty / NULL override falls back to the disk basename so callers
+    // wishing the legacy behaviour can pass NULL.
+    if (pffs_name_in && pffs_name_in[0] != '\0')
+    {
+        if (strchr(pffs_name_in, '/'))
+        {
+            fprintf(stderr,
+                "PFFS name must not contain '/': %s\n", pffs_name_in);
+            return 0;
+        }
+        pffs_name = pffs_name_in;
+    }
+    else
+    {
+        // Strip any leading directory components: PFFS only stores bare filenames.
+        // fopen() still receives the original path so relative/absolute paths work.
+        const char *bn = strrchr(filename, '/');
+        pffs_name = bn ? bn + 1 : filename;
+    }
 
     if (CheckFileName(pffs_name))
     {
