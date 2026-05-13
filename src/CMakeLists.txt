@@ -101,6 +101,34 @@ target_link_libraries(piece-emu PRIVATE
 )
 
 # ---------------------------------------------------------------------------
+# piece-emu-headless-system — script-driven full-system frontend (no SDL).
+#
+# Designed for gcc33-vs-LLVM regression diffing: emits a per-frame VRAM
+# FNV-1a-64 hash stream to stdout, with optional PNG snapshots and scripted
+# button input.  Two runs with the same PFI + script + --rtc-fixed produce
+# byte-identical stdout.
+#
+# Links the same SoC/board/CPU/debug stack as piece-emu-system, plus
+# piece_imageio for PNG output and the system/ peripherals aggregate +
+# named-button helper.  Does NOT link piece_host (SDL-only).
+# ---------------------------------------------------------------------------
+add_executable(piece-emu-headless-system
+    headless_system_main.cpp
+    headless_cli_config.cpp
+    system/piece_peripherals.cpp
+    system/named_button_input.cpp
+)
+target_include_directories(piece-emu-headless-system PRIVATE system)
+target_link_libraries(piece-emu-headless-system PRIVATE
+    piece_debug
+    piece_board
+    piece_soc
+    piece_core
+    piece_imageio
+    CLI11::CLI11
+)
+
+# ---------------------------------------------------------------------------
 # Unit tests (Google Test via vcpkg)
 # ---------------------------------------------------------------------------
 if(GTest_FOUND)

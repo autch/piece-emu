@@ -57,7 +57,7 @@ void days_to_ymd(int days, int& yy, int& mm, int& dd)
 
 } // namespace
 
-int64_t ClockTimer::host_seconds_since_2000()
+int64_t ClockTimer::real_host_seconds_since_2000()
 {
     // Use local time so the on-screen RTC matches the user's wall clock.
     std::time_t now = std::time(nullptr);
@@ -79,6 +79,11 @@ int64_t ClockTimer::host_seconds_since_2000()
          + tm_local.tm_hour * 3600
          + tm_local.tm_min  * 60
          + tm_local.tm_sec;
+}
+
+int64_t ClockTimer::host_seconds_since_2000() const
+{
+    return fixed_mode_ ? fixed_epoch_ : real_host_seconds_since_2000();
 }
 
 int64_t ClockTimer::current_seconds_since_2000() const

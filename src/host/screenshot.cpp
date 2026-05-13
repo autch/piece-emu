@@ -42,11 +42,9 @@ std::string build_filename(const std::string& dir)
 
 } // namespace
 
-std::string save_screenshot_png(const std::string& dir,
-                                const uint8_t pixels[88][128])
+std::string write_png_to_path(const std::string& path,
+                              const uint8_t pixels[88][128])
 {
-    std::string path = build_filename(dir);
-
     uint8_t gray[88 * 128];
     for (int y = 0; y < 88; y++)
         for (int x = 0; x < 128; x++)
@@ -62,4 +60,10 @@ std::string save_screenshot_png(const std::string& dir,
     }
     std::fprintf(stderr, "[SNAP] saved: %s\n", path.c_str());
     return path;
+}
+
+std::string save_screenshot_png(const std::string& dir,
+                                const uint8_t pixels[88][128])
+{
+    return write_png_to_path(build_filename(dir), pixels);
 }

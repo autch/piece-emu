@@ -17,3 +17,9 @@
 // ---------------------------------------------------------------------------
 std::string save_screenshot_png(const std::string& dir,
                                 const uint8_t pixels[88][128]);
+
+// Write a PNG to an exact path (no timestamp suffix).  Used by the headless
+// frontend whose script asks for specific filenames like "title.png".
+// Returns the path on success, empty string on failure.
+std::string write_png_to_path(const std::string& path,
+                              const uint8_t pixels[88][128]);

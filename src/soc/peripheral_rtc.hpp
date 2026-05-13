@@ -55,6 +55,18 @@ public:
     uint8_t rtcstop() const { return rtcstop_; }
     int64_t offset_seconds() const { return offset_sec_; }
 
+    // Pin the host-time base to a fixed value (seconds since 2000-01-01
+    // 00:00:00).  Used by deterministic frontends (headless regression
+    // runner) so two runs of the same PFI yield byte-identical output.
+    // The 256 Hz prescaler is already CPU-cycle-driven and unaffected by
+    // host wall-clock; only the date/time field readout path is hooked.
+    // Pass a negative value to revert to host wall-clock mode.
+    void set_fixed_epoch(int64_t sec_since_2000) {
+        fixed_mode_ = true;
+        fixed_epoch_ = sec_since_2000;
+    }
+    void clear_fixed_epoch() { fixed_mode_ = false; }
+
 private:
     static constexpr uint32_t RTC_BASE = 0x040150; // halfword base (dummy lo)
 
@@ -87,8 +99,16 @@ private:
     bool    frozen_       = false;
     int64_t frozen_sec_   = 0;
 
+    // Deterministic mode: when fixed_mode_ is set, the "host clock" is
+    // pinned to fixed_epoch_ (seconds since 2000-01-01) instead of reading
+    // std::time().  All offset/freeze logic continues to work because it
+    // only references host_seconds_since_2000() through this hook.
+    bool    fixed_mode_  = false;
+    int64_t fixed_epoch_ = 0;
+
     // ---- helpers ----------------------------------------------------------
-    static int64_t host_seconds_since_2000();
+    static int64_t real_host_seconds_since_2000();
+    int64_t host_seconds_since_2000() const;
     int64_t current_seconds_since_2000() const;
     void    apply_set_to_offset();
 
