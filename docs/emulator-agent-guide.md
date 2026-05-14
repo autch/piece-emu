@@ -3,7 +3,7 @@
 **対象読者**: LLVM S1C33 バックエンドの実装・テストを担当するAIエージェント  
 **エミュレータ実装**: `src/`  
 **現行バイナリ**: `build-src/piece-emu`  
-**実装状況**: P1 完了（CPU全命令 + ELFローダ + セミホスティング + GDB RSP + 全周辺デバイス + HLT高速スキップ）
+**実装状況**: フルシステム emulation 実装済み（CPU全命令 + ELFローダ + セミホスティング + GDB RSP + 全周辺デバイス + SIF3/HSDMA + S6B0741 LCD + PFIロード + カーネルブート）。本ガイドはベアメタル ELF テスト用途に絞って解説する。フルシステム側は `docs/headless-system-script.md` / `docs/peripheral-implementation-status.md` を参照
 
 ---
 
@@ -28,12 +28,32 @@ ninja -C build-src
 ## コマンドライン
 
 ```
-piece_emu [options] <elf-file>
+piece-emu [options] (<elf-file> | --pfi <file.pfi>)
 
-Options:
-  --trace          全命令の逆アセンブルを stderr に出力
-  --max-cycles N   N サイクル後に強制停止
-  --gdb [port]     TCP ポート（デフォルト 1234）で GDB/lldb 接続を待つ
+実行対象（どちらか一方）:
+  <elf-file>                   ベアメタル ELF をロードして実行
+  --pfi <file.pfi>             P/ECE フラッシュイメージをロードして実行
+
+実行制御:
+  --trace                      全命令の逆アセンブルを stderr に出力
+  --max-cycles N               N サイクル後に強制停止（0 = 無制限）
+  --sram-size N / --flash-size N   外部 SRAM / Flash サイズをバイト指定
+
+デバッグ（CpuRunner と同セマンティクス、いずれも繰り返し指定可）:
+  --break-at ADDR              PC == ADDR でレジスタダンプ
+  --wp-write ADDR[:SIZE]       書き込みウォッチポイント
+  --wp-read  ADDR[:SIZE]       読み出しウォッチポイント
+  --wp-rw    ADDR[:SIZE]       読み書きウォッチポイント
+
+GDB RSP:
+  --gdb                        GDB/LLDB 接続を待ってから実行（同期モード）
+  --gdb-port N                 RSP リッスンポート（デフォルト 1234、--gdb 必須）
+  --debug-rsp                  RSP パケットを stderr にログ（--gdb 必須）
+
+Flash writeback（--pfi 使用時のみ意味を持つ）:
+  --enable-flash-writeback     カーネル由来の flash 書き換えをホスト PFI に反映（headless デフォルト OFF）
+  --read-only                  --enable-flash-writeback が指定されても read-only を強制
+  --writeback-debounce-ms N    dirty セクタを flush するまでのアイドル間隔（デフォルト 2000）
 ```
 
 ### 終了コード
@@ -59,7 +79,7 @@ echo "Exit: $?"          # 0=PASS, 1=FAIL
 ./build-src/piece-emu --max-cycles 2000000 test.elf
 
 # GDB RSP デバッグ（別ターミナルから lldb/gdb で接続）
-./build-src/piece-emu --gdb 1234 test.elf &
+./build-src/piece-emu --gdb --gdb-port 1234 test.elf &
 lldb -o "gdb-remote 1234"
 ```
 
@@ -202,19 +222,20 @@ $LD -T src/tests/bare_metal/iram.ld --entry _start \
 
 ## GDB RSP によるデバッグ
 
-現在の GDB RSP は基本的なスタブ実装である。接続・レジスタ・メモリ・ステップ実行は動作するが、**ブレークポイントは未実装**。
+接続・レジスタ・メモリ・ステップ実行に加え、**ソフトウェア／ハードウェアブレークポイントも実装済み**（`b main` のような lldb のコマンドがそのまま機能する）。
 
 ```bash
 # ターミナル 1: エミュレータを GDB 待ち状態で起動
-./build-src/piece-emu --gdb 1234 test_foo.elf
+./build-src/piece-emu --gdb --gdb-port 1234 test_foo.elf
 
 # ターミナル 2: lldb で接続
 lldb
 (lldb) gdb-remote 1234
 (lldb) register read     # レジスタ読み出し
 (lldb) memory read 0x100000
+(lldb) b main            # ブレークポイント設定
 (lldb) s                 # 1命令ステップ
-(lldb) c                 # TEST_RESULT 書き込みまたは HALT まで実行継続
+(lldb) c                 # ブレークポイント / HALT まで実行継続
 ```
 
 実装済みの GDB パケット:
@@ -226,11 +247,32 @@ lldb
 | `m addr,len` | メモリ読み出し | ✅ |
 | `M addr,len:data` | メモリ書き込み | ✅ |
 | `s` | 1命令ステップ実行 | ✅ |
-| `c` | HALT まで実行継続 | ✅ |
+| `c` | ブレークポイント / HALT まで実行継続 | ✅ |
 | `Ctrl-C` | 実行中断 | ✅ |
-| `Z0`/`z0` | ソフトウェアブレークポイント | ❌ 未実装 |
+| `Z0`/`z0` | ソフトウェアブレークポイント（毎ステップ後に PC を照合） | ✅ |
+| `Z1`/`z1` | ハードウェアブレークポイント（`Z0` と同一実装） | ✅ |
 
-**注意**: `b main` のようなブレークポイント設定コマンドは機能しない。ブレークポイントが必要な場合は `--trace` と `--max-cycles` を組み合わせてオフライン解析するか、テストプログラム側でセミホスティングポートを使って特定箇所で停止させること。
+ブレークポイントは PC アドレス集合への登録で、実行継続中に毎ステップ照合される。`--gdb` は同期モード（RSP サーバが 1 スレッドで CPU を直接ステップ）。`piece-emu-system` の非同期モードについては親プロジェクトの `CLAUDE.md`「GDB RSP Modes」を参照。
+
+---
+
+## フルシステム回帰 diff（piece-emu-headless-system）
+
+ベアメタル ELF テストとは別系統の検証パスとして、**カーネル + P/ECE アプリを `.pfi` から起動し、フレームごとの VRAM ハッシュ列を stdout に出力する** SDL 非依存フロントエンド `piece-emu-headless-system` がある。バックエンド検証エージェントにとっての用途は **gcc33 ビルドと LLVM ビルドの同一アプリを差分比較すること**。両者を同じ `.pfi` + 同じ入力スクリプトで走らせ、ハッシュ列を `diff` すれば、最初に乖離したフレームが「どこで codegen が壊れたか」を指す。
+
+```bash
+# gcc33 リファレンスビルドと LLVM 候補ビルドをそれぞれ走らせる
+./build-src/piece-emu-headless-system ref-gcc33.pfi --script run.txt --rtc-fixed 2026-01-01T00:00:00 > ref.hashes
+./build-src/piece-emu-headless-system cand-llvm.pfi --script run.txt --rtc-fixed 2026-01-01T00:00:00 > cand.hashes
+diff ref.hashes cand.hashes | head   # 最初の乖離フレーム = 回帰箇所
+```
+
+- `--rtc-fixed ISO8601` で RTC をピン留めすると、同一 PFI + 同一スクリプトは **bit-identical な stdout** を返す（決定論保証）。
+- `--wall-timeout SECONDS`（デフォルト 60）が、LCD を更新しなくなったアプリ（カーネルの省電力待ち等）の暴走を防ぐ。
+- スクリプトは `frame <N> press|release|snapshot|hash|quit` と `wait <K> frames` の糖衣構文。ボタン名は UP/DOWN/LEFT/RIGHT/A/B/START/SELECT（case-insensitive）。
+- `--trace` / `--break-at` / `--wp-write|read|rw` は `piece-emu` と同じセマンティクスで使える。`--gdb-port` は headless では未実装（インタラクティブ GDB は `piece-emu-system` を使う）。
+
+スクリプト文法・出力フォーマット・終了コード・end-to-end の diff 例は **`docs/headless-system-script.md`** を参照。
 
 ---
 
@@ -249,18 +291,11 @@ lldb
 
 ---
 
-## 現在の制限事項（P1 完了時点）
+## このガイドの対象範囲
 
-以下は **未実装** であり、現時点では使用できない：
+このガイドは **ベアメタル ELF のテスト**（`piece-emu` + `src/tests/bare_metal/`）に焦点を当てている。この用途には全機能が揃っている。
 
-- SIF3（LCD コントローラへの SPI バス）
-- HSDMA（LCD 転送・サウンド PWM 値転送）
-- LCD フロントエンド（S6B0741 → SDL3 ウィンドウ）
-- ボタン入力・PWM サウンド出力
-- PFI フラッシュイメージロード（ゲーム実行不可）
-
-**ベアメタル ELF のテストには全機能が揃っている。**
-**カーネルブートは T16/INTC/RTC/ClkCtl 実装済みにより大幅に進むが、SIF3/HSDMA 待ちでハングする可能性あり。**
+P1 完了以降、フルシステム emulation（SIF3 / HSDMA / S6B0741 LCD / ボタン入力 / PWM サウンド / PFI ロード / カーネルブート）も実装済みで、`piece-emu-system`（SDL3 GUI フロントエンド）と `piece-emu-headless-system`（上記の回帰 diff 用）が利用できる。フルシステム側の周辺デバイス実装状況は `docs/peripheral-implementation-status.md`、カーネルブートの詳細は `docs/kernel-source-reference.md` を参照。
 
 ---
 

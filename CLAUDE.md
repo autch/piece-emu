@@ -129,6 +129,9 @@ ninja -C build-src
 ./build-src/piece-emu-system --pfi ... --gdb-port 1234     # with async GDB RSP (LLDB-compatible)
 ./build-src/piece-emu-system --pfi ... --gdb-debug         # trace RSP packet traffic
 
+./build-src/piece-emu-headless-system --pfi piece.pfi --script run.txt   # SDL-free, script-driven; emits per-frame VRAM hash to stdout
+./build-src/piece-emu-headless-system --pfi ... --script ... --rtc-fixed 2026-05-14T00:00:00   # pin RTC for byte-identical runs
+
 ninja -C build-src test                                    # run all unit tests (layers 1+2)
 ```
 
@@ -138,9 +141,12 @@ Build artifacts (static libraries, layered):
 - `libpiece_debug.a` — ELF loader, PFI loader, semihosting, GDB RSP stub (`src/debug/`)
 - `libpiece_board.a` — board external devices: S6B0741 LCD controller, **SST 39VF400A / 39VF160 NOR flash** (`src/board/`); links `piece_soc` publicly
 - `libpiece_host.a` — SDL3 LCD renderer and event polling (`src/host/`); stub INTERFACE when SDL3 absent
+- `libpiece_imageio.a` — SDL-free PNG screenshot writer (`src/host/screenshot.cpp`); used by the headless frontend, re-exported publicly by `piece_host`
 - `libpiece_writeback.a` — host PFI write-back (`PlatformFile` POSIX/Win32 abstraction + `PfiWriteback` debounce/flush); depends only on `piece_core`
 - `piece-emu` — headless CLI frontend (POSIX only, no SDL)
 - `piece-emu-system` — SDL3 full-system frontend (built when SDL3 found via vcpkg)
+- `piece-emu-headless-system` — SDL-free script-driven full-system frontend for deterministic frame diffing (gcc33-vs-LLVM regression); see `docs/headless-system-script.md`
+- `piece_libretro.{so,dll,dylib}` — libretro core frontend (vcpkg/SDL3/GTest-free; built by default, disable with `-DPIECE_NO_LIBRETRO=ON`); see `src/libretro/README.md`
 
 Semihosting ports: 0x060000=CONSOLE_CHAR, 0x060002=CONSOLE_STR, 0x060008=TEST_RESULT (0=PASS).
 Loading 0x060008 requires **2 EXT instructions** (bit 18 set → 19-bit sign-extend is negative).
