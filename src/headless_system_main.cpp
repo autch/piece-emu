@@ -238,6 +238,11 @@ extern "C" void on_terminate_signal(int) {
 // ---------------------------------------------------------------------------
 int main(int argc, char** argv)
 {
+    // Unbuffered stderr so the per-frame hash stream + termination
+    // diagnostics survive a pipe / IDE redirection without getting
+    // truncated on abnormal exit.
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
+
     HeadlessConfig cfg = HeadlessConfig::parse(argc, argv);
 
     try {
