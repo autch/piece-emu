@@ -159,41 +159,40 @@ void ClockTimer::attach(Bus& bus, InterruptController& /*intc*/,
     clk_ = &clk;
     next_prescaler_cycle_ = prescaler_period(clk.cpu_clock_hz());
 
-    // 0x040150: dummy (lo) + rRTCSTOP (hi)
+    // 0x040150: dummy (lo) + rRTCSTOP (hi).
+    // Byte writes to dummy 0x040150 must NOT propagate v>>8 (== 0) into
+    // rRTCSTOP — that would clear the run bit and trigger a spurious
+    // STOP/RUN transition.
+    auto write_rtcstop = [this](uint8_t written) {
+        uint8_t prev = rtcstop_;
+        rtcstop_ = written;
+        if (written & 0x02) {
+            if (!(prev & 0x02)) {
+                frozen_     = true;
+                frozen_sec_ = host_seconds_since_2000() + offset_sec_;
+            }
+            int64_t s = frozen_sec_;
+            int64_t day_total = s / 86400;
+            int64_t tod       = s - day_total * 86400;
+            set_hh_ = static_cast<uint8_t>(tod / 3600);
+            set_mi_ = static_cast<uint8_t>((tod % 3600) / 60);
+            set_day_lo_ = static_cast<uint8_t>(day_total & 0xFF);
+            set_day_hi_ = static_cast<uint8_t>((day_total >> 8) & 0xFF);
+        }
+        if ((written & 0x01) && (prev & 0x02)) {
+            apply_set_to_offset();
+        }
+    };
     bus.register_io(RTC_BASE, {
         [this](uint32_t) -> uint16_t {
             return static_cast<uint16_t>(rtcstop_) << 8;
         },
-        [this](uint32_t addr, uint16_t v) {
-            uint8_t written;
-            if (addr & 1)
-                written = static_cast<uint8_t>(v);
-            else
-                written = static_cast<uint8_t>(v >> 8);
-
-            uint8_t prev = rtcstop_;
-            rtcstop_ = written;
-
-            if (written & 0x02) {
-                // STOP transition: freeze the displayed time.
-                if (!(prev & 0x02)) {
-                    frozen_     = true;
-                    frozen_sec_ = host_seconds_since_2000() + offset_sec_;
-                }
-                // Capture currently displayed fields so partial overwrites
-                // (the kernel only writes mi/hh/day, not sec) keep the rest.
-                int64_t s = frozen_sec_;
-                int64_t day_total = s / 86400;
-                int64_t tod       = s - day_total * 86400;
-                set_hh_ = static_cast<uint8_t>(tod / 3600);
-                set_mi_ = static_cast<uint8_t>((tod % 3600) / 60);
-                set_day_lo_ = static_cast<uint8_t>(day_total & 0xFF);
-                set_day_hi_ = static_cast<uint8_t>((day_total >> 8) & 0xFF);
-            }
-            if ((written & 0x01) && (prev & 0x02)) {
-                // RUN after STOP: commit latched fields, sec resets to 0.
-                apply_set_to_offset();
-            }
+        [write_rtcstop](uint32_t, uint16_t v) {
+            write_rtcstop(static_cast<uint8_t>(v >> 8));
+        },
+        [write_rtcstop](uint32_t addr, uint8_t v) {
+            if (addr & 1) write_rtcstop(v);
+            // even (0x040150) is dummy — absorb byte writes silently
         }
     });
 
@@ -214,7 +213,8 @@ void ClockTimer::attach(Bus& bus, InterruptController& /*intc*/,
         }
     });
 
-    // 0x040154: rRTCSEC (lo) + rRTCMIN (hi)
+    // 0x040154: rRTCSEC (lo) + rRTCMIN (hi).
+    // SEC is hardware-reset on RUN; software writes to SEC are ignored.
     bus.register_io(RTC_BASE + 4, {
         [this](uint32_t) -> uint16_t {
             int64_t s = current_seconds_since_2000();
@@ -224,16 +224,16 @@ void ClockTimer::attach(Bus& bus, InterruptController& /*intc*/,
             return static_cast<uint16_t>(sec) |
                    (static_cast<uint16_t>(min) << 8);
         },
-        [this](uint32_t addr, uint16_t v) {
-            // SEC is hardware-reset on RUN; software writes are ignored.
-            if (addr & 1)
-                set_mi_ = static_cast<uint8_t>(v);
-            else
-                set_mi_ = static_cast<uint8_t>(v >> 8);
+        [this](uint32_t, uint16_t v) {
+            set_mi_ = static_cast<uint8_t>(v >> 8);
+        },
+        [this](uint32_t addr, uint8_t v) {
+            if (addr & 1) set_mi_ = v;
+            // even (RTCSEC) is software-ignored — absorb byte writes
         }
     });
 
-    // 0x040156: rRTCHOUR (lo) + rRTCDAYL (hi)
+    // 0x040156: rRTCHOUR (lo) + rRTCDAYL (hi) — two independent byte regs.
     bus.register_io(RTC_BASE + 6, {
         [this](uint32_t) -> uint16_t {
             int64_t s = current_seconds_since_2000();
@@ -244,17 +244,17 @@ void ClockTimer::attach(Bus& bus, InterruptController& /*intc*/,
             return static_cast<uint16_t>(hour) |
                    (static_cast<uint16_t>(day_lo) << 8);
         },
-        [this](uint32_t addr, uint16_t v) {
-            if (addr & 1) {
-                set_day_lo_ = static_cast<uint8_t>(v);
-            } else {
-                set_hh_     = static_cast<uint8_t>(v);
-                set_day_lo_ = static_cast<uint8_t>(v >> 8);
-            }
+        [this](uint32_t, uint16_t v) {
+            set_hh_     = static_cast<uint8_t>(v);
+            set_day_lo_ = static_cast<uint8_t>(v >> 8);
+        },
+        [this](uint32_t addr, uint8_t v) {
+            if (addr & 1) set_day_lo_ = v;
+            else          set_hh_     = v;
         }
     });
 
-    // 0x040158: rRTCDAYH (lo) + rRTCALMM (hi)
+    // 0x040158: rRTCDAYH (lo) + rRTCALMM (hi) — two independent byte regs.
     bus.register_io(RTC_BASE + 8, {
         [this](uint32_t) -> uint16_t {
             int64_t s = current_seconds_since_2000();
@@ -263,29 +263,29 @@ void ClockTimer::attach(Bus& bus, InterruptController& /*intc*/,
             return static_cast<uint16_t>(day_hi) |
                    (static_cast<uint16_t>(alarm_mi_) << 8);
         },
-        [this](uint32_t addr, uint16_t v) {
-            if (addr & 1) {
-                alarm_mi_ = static_cast<uint8_t>(v);
-            } else {
-                set_day_hi_ = static_cast<uint8_t>(v);
-                alarm_mi_   = static_cast<uint8_t>(v >> 8);
-            }
+        [this](uint32_t, uint16_t v) {
+            set_day_hi_ = static_cast<uint8_t>(v);
+            alarm_mi_   = static_cast<uint8_t>(v >> 8);
+        },
+        [this](uint32_t addr, uint8_t v) {
+            if (addr & 1) alarm_mi_   = v;
+            else          set_day_hi_ = v;
         }
     });
 
-    // 0x04015A: rRTCALMH (lo) + rRTCALMD (hi)
+    // 0x04015A: rRTCALMH (lo) + rRTCALMD (hi) — two independent byte regs.
     bus.register_io(RTC_BASE + 10, {
         [this](uint32_t) -> uint16_t {
             return static_cast<uint16_t>(alarm_hh_) |
                    (static_cast<uint16_t>(alarm_d_) << 8);
         },
-        [this](uint32_t addr, uint16_t v) {
-            if (addr & 1) {
-                alarm_d_  = static_cast<uint8_t>(v);
-            } else {
-                alarm_hh_ = static_cast<uint8_t>(v);
-                alarm_d_  = static_cast<uint8_t>(v >> 8);
-            }
+        [this](uint32_t, uint16_t v) {
+            alarm_hh_ = static_cast<uint8_t>(v);
+            alarm_d_  = static_cast<uint8_t>(v >> 8);
+        },
+        [this](uint32_t addr, uint8_t v) {
+            if (addr & 1) alarm_d_  = v;
+            else          alarm_hh_ = v;
         }
     });
 }

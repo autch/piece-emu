@@ -61,21 +61,23 @@ void Timer8bit::attach(Bus& bus,
     // Each channel occupies 4 bytes. Bus handlers are 2-byte aligned.
     uint32_t base = T8_BASE + static_cast<uint32_t>(ch_) * 4;
 
-    // [base+0]: rT8CTL (lo byte), [base+1]: rRLD (hi byte)
+    // [base+0]: rT8CTL (lo byte), [base+1]: rRLD (hi byte).
+    // Two independent byte registers — byte writes must affect only the
+    // targeted byte.  The kernel writes T8CTL via bit-field byte stores
+    // (e.g. PTRUN toggle), so without write_byte these stores would
+    // clobber rRLD with 0.
     bus.register_io(base, {
         [this](uint32_t) -> uint16_t {
             return static_cast<uint16_t>(ctl_) |
                    (static_cast<uint16_t>(rld_) << 8);
         },
-        [this](uint32_t addr, uint16_t v) {
-            if (addr & 1) {
-                // Byte write to odd address (rRLD): val in low bits.
-                rld_ = static_cast<uint8_t>(v);
-            } else {
-                // Halfword write or byte write to even address (rT8CTL).
-                on_ctl_write(static_cast<uint8_t>(v));
-                rld_ = static_cast<uint8_t>(v >> 8);
-            }
+        [this](uint32_t, uint16_t v) {
+            on_ctl_write(static_cast<uint8_t>(v));
+            rld_ = static_cast<uint8_t>(v >> 8);
+        },
+        [this](uint32_t addr, uint8_t v) {
+            if (addr & 1) rld_ = v;
+            else          on_ctl_write(v);
         }
     });
 

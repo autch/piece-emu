@@ -83,16 +83,19 @@ void PortCtrl::attach(Bus& bus, InterruptController& intc, ClockControl* clk)
         }
     });
 
-    // 0x0402C2: Dummy (lo at 0x0402C2) + rCFK6 (hi at 0x0402C3)
+    // 0x0402C2: Dummy (lo at 0x0402C2) + rCFK6 (hi at 0x0402C3).
+    // Halfword writes update rCFK6 from the high byte of v.  A byte write
+    // to the dummy 0x0402C2 must NOT propagate v>>8 (== 0) into rCFK6.
     bus.register_io(KPORT_BASE + 2, {
         [this](uint32_t) -> uint16_t {
             return static_cast<uint16_t>(cfk6_) << 8;
         },
-        [this](uint32_t addr, uint16_t v) {
-            if (addr & 1)
-                cfk6_ = static_cast<uint8_t>(v); // odd: hi byte = rCFK6
-            else
-                cfk6_ = static_cast<uint8_t>(v >> 8); // halfword: hi byte
+        [this](uint32_t, uint16_t v) {
+            cfk6_ = static_cast<uint8_t>(v >> 8);
+        },
+        [this](uint32_t addr, uint8_t v) {
+            if (addr & 1) cfk6_ = v;
+            // even 0x0402C2 is dummy — absorb
         }
     });
 
@@ -104,54 +107,57 @@ void PortCtrl::attach(Bus& bus, InterruptController& intc, ClockControl* clk)
         [](uint32_t, uint16_t) { /* k6d_ is input-only */ }
     });
 
-    // Port input interrupt — 0x0402C6..0x0402CF (10 bytes, 5 halfword handlers)
-    // Byte writes to odd addresses (rSPT2, rSPPT, rSEPT, rSCPK1, rSMPK1, etc.)
-    // must only update the targeted byte; addr & 1 distinguishes hi/lo.
+    // Port input interrupt — 0x0402C6..0x0402CF (10 bytes, 5 halfword handlers).
+    // Each halfword maps two independent byte registers (rSPT2/rSPPT/
+    // rSEPT/rSCPK1/rSMPK1 family) so byte writes must affect only the
+    // targeted byte.  write_byte distinguishes.
     for (int i = 0; i < 5; i++) {
         bus.register_io(static_cast<uint32_t>(PINT_BASE + i * 2), {
             [this, i](uint32_t) -> uint16_t {
                 return static_cast<uint16_t>(pint_[i * 2]) |
                        (static_cast<uint16_t>(pint_[i * 2 + 1]) << 8);
             },
-            [this, i](uint32_t addr, uint16_t v) {
-                if (addr & 1) {
-                    pint_[i * 2 + 1] = static_cast<uint8_t>(v);
-                } else {
-                    pint_[i * 2]     = static_cast<uint8_t>(v);
-                    pint_[i * 2 + 1] = static_cast<uint8_t>(v >> 8);
-                }
+            [this, i](uint32_t, uint16_t v) {
+                pint_[i * 2]     = static_cast<uint8_t>(v);
+                pint_[i * 2 + 1] = static_cast<uint8_t>(v >> 8);
+            },
+            [this, i](uint32_t addr, uint8_t v) {
+                if (addr & 1) pint_[i * 2 + 1] = v;
+                else          pint_[i * 2]     = v;
             }
         });
     }
 
-    // P port — 0x0402D0..0x0402DF (16 bytes, 8 halfword handlers)
+    // P port — 0x0402D0..0x0402DF (16 bytes, 8 halfword handlers).
     // Halfword i=0 covers 0x0402D0: lo=rCFP(P0), hi=rPD(P0).
-    // P07 = Port 0 rPD bit 7 (pport_[1] bit 7); notify ClockControl on change.
-    // P21D (RS signal to S6B0741) = Port 2 rPD bit 1 (pport_[9] bit 1).
-    // The kernel uses byte writes to odd addresses (e.g. bp[0x2d9] |= 0x02)
-    // to set individual port-data bits, so addr & 1 must be respected.
+    // P07 = Port 0 rPD bit 7 (pport_[1] bit 7); notify ClockControl on
+    // change.  P21D (RS signal to S6B0741) = Port 2 rPD bit 1 (pport_[9]
+    // bit 1).  Each halfword maps two independent byte registers
+    // (rCFP/rPD), so byte writes must affect only the targeted byte.
+    // The kernel writes both even (rCFP) and odd (rPD) addresses by
+    // byte, including reads-modify-writes like `bp[0x2d9] |= 0x02`.
+    auto p07_notify = [this](uint8_t old_hi) {
+        uint8_t new_hi = pport_[1];
+        if ((old_hi ^ new_hi) & 0x80)
+            clk_->set_p07((new_hi & 0x80) != 0);
+    };
     for (int i = 0; i < 8; i++) {
         bus.register_io(static_cast<uint32_t>(PPORT_BASE + i * 2), {
             [this, i](uint32_t) -> uint16_t {
                 return static_cast<uint16_t>(pport_[i * 2]) |
                        (static_cast<uint16_t>(pport_[i * 2 + 1]) << 8);
             },
-            [this, i](uint32_t addr, uint16_t v) {
+            [this, i, p07_notify](uint32_t, uint16_t v) {
                 uint8_t old_hi = pport_[i * 2 + 1];
-                if (addr & 1) {
-                    // Byte write to odd address: update only the high byte.
-                    pport_[i * 2 + 1] = static_cast<uint8_t>(v);
-                } else {
-                    // Halfword write or byte write to even address: update both.
-                    pport_[i * 2]     = static_cast<uint8_t>(v);
-                    pport_[i * 2 + 1] = static_cast<uint8_t>(v >> 8);
-                }
-                // P07 detection: halfword i=0, hi byte = rPD(P0), bit 7
-                if (i == 0 && clk_) {
-                    uint8_t new_hi = pport_[1];
-                    if ((old_hi ^ new_hi) & 0x80)
-                        clk_->set_p07((new_hi & 0x80) != 0);
-                }
+                pport_[i * 2]     = static_cast<uint8_t>(v);
+                pport_[i * 2 + 1] = static_cast<uint8_t>(v >> 8);
+                if (i == 0 && clk_) p07_notify(old_hi);
+            },
+            [this, i, p07_notify](uint32_t addr, uint8_t v) {
+                uint8_t old_hi = pport_[i * 2 + 1];
+                if (addr & 1) pport_[i * 2 + 1] = v;
+                else          pport_[i * 2]     = v;
+                if (i == 0 && clk_) p07_notify(old_hi);
             }
         });
     }

@@ -79,20 +79,19 @@ void Sif3::attach(Bus& bus, InterruptController& intc, Hsdma& hsdma)
     // Handler pair at 0x401F8:
     //   low  byte (0x401F8) = SIF3_CTL  — R/W
     //   high byte (0x401F9) = SIF3_IRDA — R/W
+    // Two independent byte registers: byte writes must affect only one.
     bus.register_io(SIF3_BASE + 4, {
         [this](uint32_t) -> uint16_t {
             return static_cast<uint16_t>(ctl_) |
                    (static_cast<uint16_t>(irda_) << 8);
         },
-        [this](uint32_t addr, uint16_t v) {
-            if (addr & 1) {
-                // Byte write to odd address 0x0401F9 (SIF3_IRDA): val in low bits.
-                irda_ = static_cast<uint8_t>(v);
-            } else {
-                // Halfword write or byte write to even address 0x0401F8 (SIF3_CTL).
-                ctl_  = static_cast<uint8_t>(v);
-                irda_ = static_cast<uint8_t>(v >> 8);
-            }
+        [this](uint32_t, uint16_t v) {
+            ctl_  = static_cast<uint8_t>(v);
+            irda_ = static_cast<uint8_t>(v >> 8);
+        },
+        [this](uint32_t addr, uint8_t v) {
+            if (addr & 1) irda_ = v;
+            else          ctl_  = v;
         }
     });
 }

@@ -156,18 +156,21 @@ void ClockControl::attach(Bus& bus)
         }
     });
 
-    // 0x040144: Dummy (lo at 0x040144) + c_CLKCTL_T8_45 (hi at 0x040145)
+    // 0x040144: Dummy (lo at 0x040144) + c_CLKCTL_T8_45 (hi at 0x040145).
+    // Halfword writes update CLKCTL_T8_45 from the high byte of v.
+    // Byte writes need write_byte so a byte store to the *dummy* 0x040144
+    // doesn't propagate v>>8 (== 0) into CLKCTL_T8_45 and clobber the
+    // T8 ch.4/5 prescaler.
     bus.register_io(0x040144, {
         [this](uint32_t) -> uint16_t {
             return static_cast<uint16_t>(clkctl_t8_[2]) << 8;
         },
-        [this](uint32_t addr, uint16_t v) {
-            if (addr & 1) {
-                write_single(0x040145, static_cast<uint8_t>(v));
-            } else {
-                // Halfword write: hi byte → CLKCTL_T8_45 (lo byte = 0x40144 dummy).
-                write_single(0x040145, static_cast<uint8_t>(v >> 8));
-            }
+        [this](uint32_t, uint16_t v) {
+            write_single(0x040145, static_cast<uint8_t>(v >> 8));
+        },
+        [this](uint32_t addr, uint8_t v) {
+            if (addr & 1) write_single(0x040145, v);
+            // even (0x040144) is dummy — absorb byte writes silently
         }
     });
 
