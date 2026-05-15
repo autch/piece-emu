@@ -150,30 +150,43 @@ std::string Cpu::disasm(uint32_t addr) const {
         }
         break;
     }
-    case 5: { // Class 5: special regs / bit ops / MAC
+    case 5: { // Class 5: op2 selects the group, op1 the variant (see cpu_dispatch.cpp)
         int o1  = i.op1();
         int o2  = i.op2();
         int rdn = i.rd();
-        int rsn = i.rs();
+        int rsn = i.rs(); // also the %rb field for bit ops
         static const char* spreg[] = {"%psr","%sp","%alr","%ahr"};
-        if (o1 == 0 && o2 == 0) { // ld.w %special, %rs (write special)
-            mnem = std::format("ld.w\t{}, %r{}", spreg[rdn & 3], rsn);
-        } else if (o1 == 1 && o2 == 0) { // ld.w %rd, %special (read special)
-            mnem = std::format("ld.w\t%r{}, {}", rdn, spreg[rsn & 3]);
-        } else if (o1 == 2) { // bit ops [%rb], imm3
-            // imm3 is in bits [2:0]; rb is in bits [7:4]
-            static const char* bop[] = {"btst","bclr","bset","bnot"};
-            mnem = std::format("{}\t[%r{}], {}", bop[o2], rsn, i.imm3());
-        } else if (o1 == 3) { // adc/sbc
-            mnem = std::format("{}\t%r{}, %r{}", (o2 == 0) ? "adc" : "sbc", rdn, rsn);
-        } else if (o1 == 4) { // ld byte/half reg-reg
+        if (o2 == 0) { // special-reg moves / bit ops / adc / sbc
+            switch (o1) {
+            case 0: // ld.w %special, %rs (write special)
+                mnem = std::format("ld.w\t{}, %r{}", spreg[rdn & 3], rsn);
+                break;
+            case 1: // ld.w %rd, %special (read special)
+                mnem = std::format("ld.w\t%r{}, {}", rdn, spreg[rsn & 3]);
+                break;
+            case 2: case 3: case 4: case 5: { // bit ops [%rb], imm3
+                static const char* bop[] = {"btst","bclr","bset","bnot"};
+                mnem = std::format("{}\t[%r{}], {}", bop[o1 - 2], rsn, i.imm3());
+                break;
+            }
+            case 6: mnem = std::format("adc\t%r{}, %r{}", rdn, rsn); break;
+            case 7: mnem = std::format("sbc\t%r{}, %r{}", rdn, rsn); break;
+            }
+        } else if (o2 == 1) { // ld.b/ub/h/uh %rd, %rs (reg-reg)
             static const char* ldnames5[] = {"ld.b","ld.ub","ld.h","ld.uh"};
-            mnem = std::format("{}\t%r{}, %r{}", ldnames5[o2], rdn, rsn);
-        } else if (o1 == 5) { // multiply
-            static const char* macnames[] = {"mlt.h","mltu.h","mlt.w","mltu.w"};
-            mnem = std::format("{}\t%r{}, %r{}", macnames[o2], rdn, rsn);
-        } else if (o1 == 6 && o2 == 0) { // mac (adc/sbc group, op1=6)
-            mnem = std::format("mac\t%r{}, %r{}", rdn, rsn);
+            if (o1 <= 3)
+                mnem = std::format("{}\t%r{}, %r{}", ldnames5[o1], rdn, rsn);
+            else
+                mnem = std::format("?5_{}{}", o1, o2);
+        } else if (o2 == 2) { // multiply / MAC
+            if (o1 <= 3) {
+                static const char* macnames[] = {"mlt.h","mltu.h","mlt.w","mltu.w"};
+                mnem = std::format("{}\t%r{}, %r{}", macnames[o1], rdn, rsn);
+            } else if (o1 == 4) {
+                mnem = std::format("mac\t%r{}", rsn);
+            } else {
+                mnem = std::format("?5_{}{}", o1, o2);
+            }
         } else {
             mnem = std::format("?5_{}{}", o1, o2);
         }
