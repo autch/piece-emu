@@ -18,6 +18,11 @@ protected:
             last_trap_no  = no;
             last_trap_lvl = lv;
         });
+        // Reset to defined initial state (per S1C33209 reset behaviour:
+        // RSTONLY=1, IDMAONLY=1, DENONLY=1 at offset 63).  The kernel
+        // later writes 0x06 to switch RSTONLY to 0 (R/W mode), but the
+        // initial state matters for default-mode tests.
+        intc.reset();
     }
 
     void reset_trap() { last_trap_no = -1; last_trap_lvl = -1; }
@@ -111,9 +116,14 @@ TEST_F(IntcFixture, T8_UF_TrapNumbers) {
 //
 // The kernel uses read-modify-write "*(unsigned char*)0x40282 &= ~mask"
 // to clear a specific ISR bit.  RSTONLY=0 means direct write: writing 0
-// clears the flag, writing 1 force-sets it.
+// clears the flag, writing 1 force-sets it.  The kernel switches to this
+// mode at boot by writing 0x06 to 0x4029F.
 // ---------------------------------------------------------------------------
 TEST_F(IntcFixture, ISR_Clear_NormalMode) {
+    // Switch to RSTONLY=0 (R/W mode) — kernel does this with bp[0x29f]=0x06.
+    bus.write8(INTC_BASE + 63, 0x06);
+    EXPECT_EQ(0, intc.reg(63) & 0x01) << "RSTONLY should be cleared";
+
     // Raise T8_UF0 to set ISR6 bit 0 (ISR byte 37)
     intc.raise(InterruptController::IrqSource::T8_UF0);
     EXPECT_NE(0, intc.reg(37) & 0x01) << "ISR bit should be set";
@@ -128,22 +138,37 @@ TEST_F(IntcFixture, ISR_Clear_NormalMode) {
 }
 
 // ---------------------------------------------------------------------------
-// ISR clear in RSTONLY mode: write 0 to bit clears it
+// ISR clear in RSTONLY mode (reset-only): write 1 to bit clears it.
+// S1C33209 Tech Manual B-II-5-20 (RSTONLY register description):
+// "リセットオンリー方式の場合、割り込み要因フラグは "1" を書き込むこと
+//  でリセットされます。"0"を書き込んだ要因フラグはセットもリセットもされません。"
+// Initial reset sets RSTONLY=1, so this is the default mode.
 // ---------------------------------------------------------------------------
 TEST_F(IntcFixture, ISR_Clear_RstOnlyMode) {
-    // Set RSTONLY bit in rRESET (offset 63, last byte of INTC block)
-    // rRESET is at byte 63 = hi byte of the halfword at offset 62.
-    bus.write16(INTC_BASE + 62, 0x0100); // hi byte (offset 63) bit 0 = RSTONLY
+    // Initial state: RSTONLY=1 (default).  Confirm by reading.
+    EXPECT_NE(0, intc.reg(63) & 0x01) << "RSTONLY should default to 1";
 
-    // Raise T8_UF0
+    // Raise T8_UF0 (ISR6 = byte 37, bit 0)
     intc.raise(InterruptController::IrqSource::T8_UF0);
     EXPECT_NE(0, intc.reg(37) & 0x01);
 
-    // Write 0 to ISR6 byte — clears all set bits
+    // Write 1 to ISR6 bit 0 — clears that bit, leaves other bits unchanged.
     uint16_t cur = bus.read16(INTC_BASE + 36);
-    cur &= 0x00FF; // zero out hi byte (ISR6)
-    bus.write16(INTC_BASE + 36, cur);
-    EXPECT_EQ(0, intc.reg(37) & 0x01) << "RSTONLY: write-0 should clear ISR";
+    bus.write16(INTC_BASE + 36, cur | 0x0100); // set bit 0 of ISR6 (hi byte)
+    EXPECT_EQ(0, intc.reg(37) & 0x01) << "RSTONLY: write-1 should clear ISR";
+}
+
+// ---------------------------------------------------------------------------
+// ISR clear in RSTONLY mode via byte write (covers write_byte path).
+// ---------------------------------------------------------------------------
+TEST_F(IntcFixture, ISR_Clear_RstOnlyMode_ByteWrite) {
+    EXPECT_NE(0, intc.reg(63) & 0x01); // RSTONLY=1 default
+    intc.raise(InterruptController::IrqSource::T8_UF0);
+    EXPECT_NE(0, intc.reg(37) & 0x01);
+
+    // Byte write to ISR6 (offset 37) with bit 0 set — clears bit 0.
+    bus.write8(INTC_BASE + 37, 0x01);
+    EXPECT_EQ(0, intc.reg(37) & 0x01) << "RSTONLY byte-write 1 should clear ISR";
 }
 
 // ---------------------------------------------------------------------------

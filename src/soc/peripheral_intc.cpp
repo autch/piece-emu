@@ -95,6 +95,11 @@ InterruptController::src_table_[static_cast<int>(Src::NUM_SOURCES)] = {
 void InterruptController::reset()
 {
     for (auto& r : regs_) r = 0;
+    // S1C33209 Tech Manual B-II-5-20: initial reset sets RSTONLY=1 and
+    // similarly IDMAONLY=1, DENONLY=1 — all three "reset-only" defaults.
+    // The kernel later writes 0x06 to 0x4029F (RSTONLY=0, IDMAONLY=1,
+    // DENONLY=1) so its `bp[isr] &= ~mask` pattern works as write-replace.
+    regs_[63] = 0x07;
     for (auto& v : level_override_) v = -1;
     current_il_ = 0;
     poll_dirty_ = true;
@@ -133,8 +138,8 @@ void InterruptController::io_write_byte(uint32_t off, uint32_t addr, uint8_t val
     int byte_off = static_cast<int>(off) + ((addr & 1) ? 1 : 0);
     if (byte_off >= 32 && byte_off <= 39) {
         uint8_t before = regs_[byte_off];
-        if (rstonly) regs_[byte_off] &= val;
-        else         regs_[byte_off]  = val;
+        if (rstonly) regs_[byte_off] &= ~val; // write 1 clears, write 0 preserves
+        else         regs_[byte_off]  = val;  // write replaces
         uint8_t cleared = before & ~regs_[byte_off];
         if (cleared) {
             for (int i = 0; i < static_cast<int>(IrqSource::NUM_SOURCES); i++) {
@@ -165,14 +170,20 @@ void InterruptController::io_write(uint32_t off, uint32_t addr, uint16_t val)
     // ISR registers are at offsets 32..39 in regs_[].
     // ISR write semantics depend on rRESET.RSTONLY (bit 0 of byte at offset 63):
     //
-    //   RSTONLY=0 (default): ISR is fully read/write.  Writing 0 clears the flag
-    //                        (write-0-to-clear); writing 1 force-sets it.  The kernel
-    //                        uses read-modify-write "bp[isr] &= ~mask" to clear a
+    //   RSTONLY=0 (default): ISR is fully read/write.  Writing 0 clears the flag,
+    //                        writing 1 force-sets it.  The kernel uses
+    //                        read-modify-write "bp[isr] &= ~mask" to clear a
     //                        specific bit — this is the normal case (kernel sets
     //                        bp[0x29f]=0x06 which leaves RSTONLY=0).
     //
-    //   RSTONLY=1:           ISR can only be cleared, not force-set.  Writing 0 to a
-    //                        bit clears it; writing 1 has no effect.
+    //   RSTONLY=1:           write-1-clears, write-0-no-effect.  Used by
+    //                        clippce's internal_8tu_isr — it reads the ISR
+    //                        snapshot, then writes the snapshot back under
+    //                        RSTONLY=1 to clear every flag that was set.
+    //                        Inverting this semantic (write-1-PRESERVES) would
+    //                        latch the IRQ forever and re-enter the ISR after
+    //                        every reti, which is exactly what stalled luaspd
+    //                        in c_prog2's fmodf loop.
     bool rstonly = (regs_[63] & 0x01) != 0;
 
     auto write_byte = [&](int byte_off, uint8_t byte_val) {
@@ -180,9 +191,9 @@ void InterruptController::io_write(uint32_t off, uint32_t addr, uint16_t val)
             // ISR register: selective clear
             uint8_t before = regs_[byte_off];
             if (rstonly) {
-                regs_[byte_off] &= byte_val;
+                regs_[byte_off] &= ~byte_val; // write 1 clears
             } else {
-                regs_[byte_off] = byte_val;
+                regs_[byte_off] = byte_val;   // write replaces
             }
             // Clear per-source level overrides for any bits that transitioned
             // from 1 → 0 (i.e. were just acknowledged by the kernel).
