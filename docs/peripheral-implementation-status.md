@@ -51,8 +51,14 @@ intc.raise(InterruptController::IrqSource::T16_CRA0);
 
 - ISRフラグ: IEN・優先度に関わらず常にセット（GDBからのレジスタ確認に有用）
 - IEN=0 または priority=0 の場合は assert_trap を呼ばない
-- rRESET.RSTONLY=0 (default, kernel sets bp[0x29f]=0x06): direct write — write-0-to-clear (same as kernel's `&= ~mask` pattern); writing 1 force-sets the flag
-- rRESET.RSTONLY=1: write-0-to-clear only — writing 1 has no effect (protected against software force-set)
+- rRESET.RSTONLY=1 (**default at power-on**, S1C33209 Tech Manual B-II-5-20):
+  リセットオンリー方式 — write-1-clears, writing 0 has no effect.  Used by
+  clippce's internal_8tu_isr to selectively clear the ISR snapshot it just
+  read (`bRST_RESET_RSTONLY=1; pINT_F8T=flag; bRST_RESET_RSTONLY=0`).
+- rRESET.RSTONLY=0 (kernel sets bp[0x29f]=0x06): リード/ライト方式 — direct
+  write-replace.  The kernel uses the read-modify-write pattern
+  `*(unsigned char*)0x40282 &= ~mask` to clear a specific ISR bit;
+  this works because writing 0 clears and writing 1 sets in this mode.
 - IrqSource ↔ (trap_no, pri_byte, pri_shift, ien_byte, ien_bit, isr_byte, isr_bit) 変換テーブルを保持
 
 **実装済みソース**: 39種類
