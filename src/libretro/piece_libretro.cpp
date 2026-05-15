@@ -418,8 +418,7 @@ RETRO_API void retro_run(void)
         std::uint64_t stop = std::min(g_next_timer_wake, target);
         while (!g_cpu->state.in_halt && !g_cpu->state.fault
                && g_total_cycles < stop) {
-            g_cpu->step();
-            ++g_total_cycles;
+            g_total_cycles += g_cpu->step();
         }
         if (g_cpu->state.fault) break;
 

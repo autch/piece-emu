@@ -247,10 +247,19 @@ void Bus::write8(uint32_t addr, uint8_t val) {
     case Region::IO: {
         uint32_t norm = normalize_io(addr);
         uint32_t idx  = (norm - IOREG_BASE) / 2;
-        if (idx < io_handlers_.size() && io_handlers_[idx].write)
-            // Pass the original (possibly odd) address so the handler can
-            // distinguish high-byte (odd) from low-byte (even) writes.
-            io_handlers_[idx].write(norm, val);
+        if (idx < io_handlers_.size()) {
+            // Prefer the byte-precise callback when present.  Halfword
+            // slots that map two independent byte registers register one
+            // so a byte write doesn't clobber the adjacent byte.
+            if (io_handlers_[idx].write_byte) {
+                io_handlers_[idx].write_byte(norm, val);
+            } else if (io_handlers_[idx].write) {
+                // Fallback: pass the original (possibly odd) address so
+                // the handler can distinguish high-byte (odd) from
+                // low-byte (even) writes via `addr & 1`.
+                io_handlers_[idx].write(norm, val);
+            }
+        }
         return;
     }
     default:
@@ -338,24 +347,33 @@ void Bus::write32(uint32_t addr, uint32_t val) {
 uint16_t Bus::fetch16(uint32_t addr) {
     addr &= 0x0FFF'FFFF;
     addr &= ~1u;
-    // Flash first: P/ECE code runs almost entirely from Flash (0xC00000+).
+    // Flash first: P/ECE kernel and many apps execute from Flash (0xC00000+).
     // Always read raw memory: the CPU never fetches instructions while the
     // flash device is in CFI / Software-ID mode (the kernel exits before
     // the next code-flash access), so bypassing the virtual call here is
     // safe and removes a per-instruction indirect branch.
-    if (addr >= FLASH_BASE && addr < FLASH_BASE + flash_device_->size())
+    if (addr >= FLASH_BASE && addr < FLASH_BASE + flash_device_->size()) {
+        cycles += flash_wait + 1;
         return le16(flash_device_->mem_ptr() + (addr - FLASH_BASE));
-    // Internal RAM (startup trampolines, kernel, interrupt vectors)
-    if (addr < IRAM_SIZE)
+    }
+    // Internal RAM (startup trampolines, kernel ISRs, fast-path benchmark
+    // code copied here by apps).  0-wait, but still 1 cycle for execute.
+    if (addr < IRAM_SIZE) {
+        cycles += 1;
         return le16(&iram_[addr]);
-    if (addr >= 0x002000 && addr < 0x003000)
+    }
+    if (addr >= 0x002000 && addr < 0x003000) {
+        cycles += 1;
         return le16(&iram_[addr & (IRAM_SIZE - 1)]);
-    // SRAM (dynamically loaded code)
+    }
+    // SRAM (most P/ECE app code lives here after kernel loads the .pex)
     if (addr >= SRAM_BASE && addr < SRAM_BASE + SRAM_WINDOW) {
+        cycles += sram_wait + 1;
         uint32_t off = addr - SRAM_BASE;
         if (off < sram_.size()) return le16(&sram_[off]);
-        return 0xFFFF; // open-bus beyond installed SRAM
+        return 0xFFFF; // open-bus beyond installed SRAM (BCU still applies wait)
     }
+    cycles += 1; // unknown region: keep progress
     return 0xFFFF;
 }
 

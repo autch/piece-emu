@@ -104,21 +104,28 @@ TEST_F(BcuFixture, Flash_Read32_AccruesCycles) {
     EXPECT_EQ(bus.cycles, 8u);
 }
 
-// ---- Fetch (instruction fetch bypasses cycle charge) ----
+// ---- Fetch (charges base 1 + region wait) ----
 
-TEST_F(BcuFixture, Fetch_Iram_NoCycles) {
+TEST_F(BcuFixture, Fetch_Iram_ChargesOneCycle) {
     bus.write16(0x000000, 0xABCD);
     bus.cycles = 0;
     EXPECT_EQ(bus.fetch16(0x000000), 0xABCD);
-    EXPECT_EQ(bus.cycles, 0u);
+    EXPECT_EQ(bus.cycles, 1u); // IRAM: 0 wait + 1 base
 }
 
-TEST_F(BcuFixture, Fetch_Flash_NoCycles) {
+TEST_F(BcuFixture, Fetch_Sram_ChargesWaitPlusOne) {
+    bus.write16(0x100000, 0xCAFE);
+    bus.cycles = 0;
+    EXPECT_EQ(bus.fetch16(0x100000), 0xCAFEu);
+    EXPECT_EQ(bus.cycles, 4u); // sram_wait (3) + 1
+}
+
+TEST_F(BcuFixture, Fetch_Flash_ChargesWaitPlusOne) {
     uint8_t data[] = {0x34, 0x12};
     bus.load_flash(0, data, 2);
     bus.cycles = 0;
     EXPECT_EQ(bus.fetch16(0xC00000), 0x1234);
-    EXPECT_EQ(bus.cycles, 0u); // fetch16 does not charge cycles
+    EXPECT_EQ(bus.cycles, 4u); // flash_wait (3) + 1
 }
 
 // ---- Unmapped region returns open-bus ----

@@ -115,9 +115,42 @@ void InterruptController::attach(Bus& bus,
             },
             [this, off](uint32_t addr, uint16_t val) {
                 io_write(off, addr, val);
+            },
+            // Byte-precise variant: only the targeted byte changes.
+            // Critical for ISR-clear writes ("bp[isr] &= ~mask") so a
+            // byte write doesn't accidentally clear the adjacent ISR byte.
+            [this, off](uint32_t addr, uint8_t val) {
+                io_write_byte(off, addr, val);
             }
         });
     }
+}
+
+void InterruptController::io_write_byte(uint32_t off, uint32_t addr, uint8_t val)
+{
+    // Direct byte write — write_byte logic with the addressed byte only.
+    bool rstonly = (regs_[63] & 0x01) != 0;
+    int byte_off = static_cast<int>(off) + ((addr & 1) ? 1 : 0);
+    if (byte_off >= 32 && byte_off <= 39) {
+        uint8_t before = regs_[byte_off];
+        if (rstonly) regs_[byte_off] &= val;
+        else         regs_[byte_off]  = val;
+        uint8_t cleared = before & ~regs_[byte_off];
+        if (cleared) {
+            for (int i = 0; i < static_cast<int>(IrqSource::NUM_SOURCES); i++) {
+                const SrcInfo& info = src_table_[i];
+                if (info.isr_byte == byte_off
+                        && (cleared & (1 << info.isr_bit))) {
+                    level_override_[i] = -1;
+                }
+            }
+        }
+    } else {
+        regs_[byte_off] = val;
+    }
+    if ((byte_off < 14) || (byte_off >= 16 && byte_off < 24)
+            || (byte_off >= 32 && byte_off < 40))
+        poll_dirty_ = true;
 }
 
 uint16_t InterruptController::io_read(uint32_t off)

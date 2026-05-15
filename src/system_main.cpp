@@ -96,6 +96,11 @@ namespace {
 // ---------------------------------------------------------------------------
 int main(int argc, char** argv)
 {
+    // Force stderr unbuffered so abnormal-termination prints don't get
+    // lost when the IDE / pipe buffers stderr.  Especially important for
+    // MSVC Release where a silent crash might happen between prints.
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
+
 #if defined(_WIN32)
     ::SetThreadDescription(::GetCurrentThread(), L"piece-sdl");
 #elif defined(__APPLE__)

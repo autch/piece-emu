@@ -35,20 +35,38 @@ using WpCallback = std::function<void(const Watchpoint&, uint32_t, uint32_t, int
 //   0x0C00000–...       External Flash (16-bit, configurable wait)
 //
 // Wait cycle model (BCU):
-//   Internal:         always 0 wait, no penalty
+//   Internal IRAM:    always 0 wait — charged as 1 cycle / fetch (base exec)
 //   External (16-bit device):
+//     insn fetch  = wait + 1 cycles  (charged by fetch16; was previously free)
 //     byte  read  = wait + 1 cycles
 //     byte  write = wait + 2 cycles
 //     half  read  = wait + 1 cycles
 //     half  write = wait + 2 cycles
 //     word  read  = (wait + 1) * 2 cycles  (two 16-bit accesses)
 //     word  write = (wait + 2) * 2 cycles
+//
+// All wait cycles accumulate into Bus::cycles.  Cpu::step() captures the
+// delta across one instruction and returns it; runners add it to total_cycles
+// so timers see accurate wall-time progression.
 // ============================================================================
 
-// I/O handler pair — one per 2-byte aligned I/O register
+// I/O handler pair — one per 2-byte aligned I/O register.
+//
+// write_byte is an optional byte-precise specialization.  When present,
+// Bus::write8 calls it instead of `write`.  This matters for halfword
+// slots that map two independent byte registers (e.g. CLKSEL_T8 at
+// 0x40146 + CLKCTL_T16_0 at 0x40147): without write_byte, a `write8(0x40146, v)`
+// goes through the halfword `write` callback which can't tell a byte
+// write from a halfword write with high byte 0, and ends up clobbering
+// the adjacent byte with 0.
 struct IoHandler {
-    std::function<uint16_t(uint32_t addr)>           read;
-    std::function<void(uint32_t addr, uint16_t val)> write;
+    // Default-initialised to empty (=null) std::function.  Made explicit so
+    // existing brace-init sites that only pass {read, write} reliably get
+    // an empty `write_byte` field across compilers (MSVC Release in
+    // particular was sensitive to the implicit aggregate value-init here).
+    std::function<uint16_t(uint32_t addr)>           read       = {};
+    std::function<void(uint32_t addr, uint16_t val)> write      = {};
+    std::function<void(uint32_t addr, uint8_t  val)> write_byte = {};
 };
 
 class Bus {
@@ -88,9 +106,11 @@ public:
         flash_device_ = std::move(dev);
     }
 
-    // External area wait cycles (default: 3 for SRAM, 3 for Flash)
-    int sram_wait  = 3;
-    int flash_wait = 3;
+    // External area wait cycles (default: 2 for SRAM, 2 for Flash —
+    // matches the P/ECE kernel's 24 MHz BCU programming.  BCU register
+    // writes from the kernel will overwrite these at boot.)
+    int sram_wait  = 2;
+    int flash_wait = 2;
 
     // Cycle counter (incremented by each access)
     uint32_t cycles = 0;
@@ -145,7 +165,11 @@ public:
     void write16(uint32_t addr, uint16_t val);
     void write32(uint32_t addr, uint32_t val);
 
-    // ---- Instruction fetch (internal RAM + Flash only, no I/O, no cycle charge) ----
+    // ---- Instruction fetch (internal RAM + SRAM + Flash; charges cycles) ----
+    // IRAM fetch  → cycles += 1            (0-wait + 1 base exec cycle)
+    // SRAM fetch  → cycles += sram_wait+1  (wait state + 1 base)
+    // Flash fetch → cycles += flash_wait+1 (wait state + 1 base)
+    // Unknown region → cycles += 1, returns 0xFFFF
     uint16_t fetch16(uint32_t addr);
 
     // Raw pointer into internal RAM (for ELF load / debug)

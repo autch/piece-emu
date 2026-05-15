@@ -420,8 +420,7 @@ int main(int argc, char** argv)
                 if (fast_path) {
                     while (!cpu->state.in_halt && !cpu->state.fault
                            && !frame_ready && total_cycles < stop) {
-                        cpu->step();
-                        ++total_cycles;
+                        total_cycles += cpu->step();
                     }
                 } else {
                     while (!cpu->state.in_halt && !cpu->state.fault
@@ -434,11 +433,12 @@ int main(int argc, char** argv)
                         if (!break_addrs.empty()
                                 && break_addrs.count(cpu->state.pc)) {
                             std::fprintf(stderr,
-                                "[BREAK] PC=0x%06X\n", cpu->state.pc);
+                                "[BREAK] PC=0x%06X cycles=%llu\n",
+                                cpu->state.pc,
+                                static_cast<unsigned long long>(total_cycles));
                             print_reg_snapshot(cpu->state);
                         }
-                        cpu->step();
-                        ++total_cycles;
+                        total_cycles += cpu->step();
                         if (cfg.max_cycles
                                 && total_cycles >= cfg.max_cycles) {
                             std::fprintf(stderr,
@@ -557,6 +557,25 @@ int main(int argc, char** argv)
                 cfg.wall_timeout_sec,
                 (unsigned long long)total_cycles,
                 (unsigned long long)frame_no);
+            // Dump register state so the hang location is identifiable.
+            print_reg_snapshot(cpu->state);
+            // Show stack top — at NMI ISR entry SP points at saved PC.
+            std::fprintf(stderr, "Stack near SP:\n");
+            uint32_t sp = cpu->state.sp;
+            for (int i = 0; i < 8; ++i) {
+                uint32_t a = sp + i * 4;
+                uint32_t v = bus->read32(a);
+                std::fprintf(stderr, "  [SP+%2d] = 0x%08X\n", i * 4, v);
+            }
+            // Show ±16 halfwords around PC for context (each is 2 bytes).
+            std::fprintf(stderr, "Disasm around PC:\n");
+            uint32_t pc0 = cpu->state.pc;
+            for (int i = -8; i <= 8; ++i) {
+                uint32_t a = pc0 + i * 2;
+                std::fprintf(stderr, "  %s%s\n",
+                    cpu->disasm(a).c_str(),
+                    (i == 0) ? "  <-- PC" : "");
+            }
             return 3;
         }
         std::fprintf(stderr, "Stopped after %llu cycles, %llu frames\n",

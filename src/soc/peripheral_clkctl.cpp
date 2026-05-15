@@ -172,16 +172,19 @@ void ClockControl::attach(Bus& bus)
     });
 
     // 0x040146: c_CLKSEL_T8 (lo) + c_CLKCTL_T16_0 (hi at 0x040147)
+    // The two bytes are INDEPENDENT registers; a byte write must affect
+    // only the addressed byte (write_byte path), while a halfword write
+    // updates both (write path).
     bus.register_io(0x040146, {
         [this](uint32_t) -> uint16_t {
             return static_cast<uint16_t>(clksel_t8_03_) |
                    (static_cast<uint16_t>(clkctl_t16_[0]) << 8);
         },
-        [this](uint32_t addr, uint16_t v) {
-            if (addr & 1) { write_single(0x040147, static_cast<uint8_t>(v)); }
-            else { write_single(0x040146, static_cast<uint8_t>(v));
-                   write_single(0x040147, static_cast<uint8_t>(v >> 8)); }
-        }
+        [this](uint32_t, uint16_t v) {
+            write_single(0x040146, static_cast<uint8_t>(v));
+            write_single(0x040147, static_cast<uint8_t>(v >> 8));
+        },
+        [this](uint32_t addr, uint8_t v) { write_single(addr, v); }
     });
 
     // 0x040148: c_CLKCTL_T16_1 (lo) + c_CLKCTL_T16_2 (hi)
@@ -190,11 +193,11 @@ void ClockControl::attach(Bus& bus)
             return static_cast<uint16_t>(clkctl_t16_[1]) |
                    (static_cast<uint16_t>(clkctl_t16_[2]) << 8);
         },
-        [this](uint32_t addr, uint16_t v) {
-            if (addr & 1) { write_single(0x040149, static_cast<uint8_t>(v)); }
-            else { write_single(0x040148, static_cast<uint8_t>(v));
-                   write_single(0x040149, static_cast<uint8_t>(v >> 8)); }
-        }
+        [this](uint32_t, uint16_t v) {
+            write_single(0x040148, static_cast<uint8_t>(v));
+            write_single(0x040149, static_cast<uint8_t>(v >> 8));
+        },
+        [this](uint32_t addr, uint8_t v) { write_single(addr, v); }
     });
 
     // 0x04014A: c_CLKCTL_T16_3 (lo) + c_CLKCTL_T16_4 (hi)
@@ -203,11 +206,11 @@ void ClockControl::attach(Bus& bus)
             return static_cast<uint16_t>(clkctl_t16_[3]) |
                    (static_cast<uint16_t>(clkctl_t16_[4]) << 8);
         },
-        [this](uint32_t addr, uint16_t v) {
-            if (addr & 1) { write_single(0x04014B, static_cast<uint8_t>(v)); }
-            else { write_single(0x04014A, static_cast<uint8_t>(v));
-                   write_single(0x04014B, static_cast<uint8_t>(v >> 8)); }
-        }
+        [this](uint32_t, uint16_t v) {
+            write_single(0x04014A, static_cast<uint8_t>(v));
+            write_single(0x04014B, static_cast<uint8_t>(v >> 8));
+        },
+        [this](uint32_t addr, uint8_t v) { write_single(addr, v); }
     });
 
     // 0x04014C: c_CLKCTL_T16_5 (lo) + c_CLKCTL_T8_01 (hi)
@@ -216,11 +219,11 @@ void ClockControl::attach(Bus& bus)
             return static_cast<uint16_t>(clkctl_t16_[5]) |
                    (static_cast<uint16_t>(clkctl_t8_[0]) << 8);
         },
-        [this](uint32_t addr, uint16_t v) {
-            if (addr & 1) { write_single(0x04014D, static_cast<uint8_t>(v)); }
-            else { write_single(0x04014C, static_cast<uint8_t>(v));
-                   write_single(0x04014D, static_cast<uint8_t>(v >> 8)); }
-        }
+        [this](uint32_t, uint16_t v) {
+            write_single(0x04014C, static_cast<uint8_t>(v));
+            write_single(0x04014D, static_cast<uint8_t>(v >> 8));
+        },
+        [this](uint32_t addr, uint8_t v) { write_single(addr, v); }
     });
 
     // 0x04014E: c_CLKCTL_T8_23 (lo) + Dummy (hi at 0x04014F for AD clock)

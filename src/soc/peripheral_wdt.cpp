@@ -15,21 +15,21 @@ void WatchdogTimer::attach(Bus& bus, const ClockControl& clk,
     clk_        = &clk;
     assert_nmi_ = std::move(assert_nmi);
 
-    // 0x040170: rWRWD (lo) + rEWD (hi)
+    // 0x040170: rWRWD (lo) + rEWD (hi) — two independent byte registers.
+    // A byte write must affect only the addressed byte; the halfword `write`
+    // is used for actual halfword writes only.
     bus.register_io(0x040170, {
         [this](uint32_t) -> uint16_t {
             return static_cast<uint16_t>(wrwd_) |
                    (static_cast<uint16_t>(ewd_) << 8);
         },
-        [this](uint32_t addr, uint16_t v) {
-            if (addr & 1) {
-                // Byte write to odd address 0x040171 (rEWD)
-                ewd_  = static_cast<uint8_t>(v);
-            } else {
-                // Halfword write or byte write to even address 0x040170 (rWRWD)
-                wrwd_ = static_cast<uint8_t>(v);
-                ewd_  = static_cast<uint8_t>(v >> 8);
-            }
+        [this](uint32_t, uint16_t v) {
+            wrwd_ = static_cast<uint8_t>(v);
+            ewd_  = static_cast<uint8_t>(v >> 8);
+        },
+        [this](uint32_t addr, uint8_t v) {
+            if (addr & 1) ewd_  = v;
+            else          wrwd_ = v;
         }
     });
 }

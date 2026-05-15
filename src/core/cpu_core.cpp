@@ -302,6 +302,16 @@ static DelayClass delay_slot_class(uint16_t insn) {
 // ============================================================================
 
 int Cpu::step() {
+    // Sample the bus cycle counter before fetch so we can report the
+    // wait-state-aware delta back to the caller.  Halt / breakpoint
+    // early returns don't fetch, so they return a fixed 1 to keep the
+    // outer loop's notion of time progressing.
+    uint32_t cycles_before = bus_.cycles;
+    auto cycles_consumed = [&]() -> int {
+        uint32_t d = bus_.cycles - cycles_before;
+        return d > 0 ? static_cast<int>(d) : 1;
+    };
+
     if (state.in_halt) return 1;
 
     // Software breakpoint check (semihosting BKPT_SET).
@@ -341,7 +351,7 @@ int Cpu::step() {
         if (state.pending_ext_count > 0) {
             diag_fault("delay_slot_ext", insn_pc,
                 std::format("EXT prefix applied inside delay slot at 0x{:06X}", insn_pc));
-            return 1;
+            return cycles_consumed();
         }
         DelayClass dsc = delay_slot_class(insn);
         if (dsc != DC_OK) {
@@ -353,7 +363,7 @@ int Cpu::step() {
                 diag_warn_or_fault("delay_slot_soft", insn_pc,
                     detail + " (not listed as delay-slot-safe in the manual)");
             }
-            if (state.in_halt) return 1;
+            if (state.in_halt) return cycles_consumed();
         }
 
         // Warn when the delay slot of ret.d or call.d writes to SP:
@@ -382,7 +392,7 @@ int Cpu::step() {
         diag_warn_or_fault("ext_incompat", insn_pc,
             std::format("EXT prefix before {} at 0x{:06X}: instruction does not support EXT",
                         disasm(insn_pc), insn_pc));
-        if (state.in_halt) return 1;
+        if (state.in_halt) return cycles_consumed();
         // Non-strict: continue; the handler will call flush_ext() to discard
     }
 
@@ -417,5 +427,5 @@ int Cpu::step() {
         do_trap(state.deferred_trap_no, state.deferred_trap_level);
     }
 
-    return 1;
+    return cycles_consumed();
 }

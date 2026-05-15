@@ -131,4 +131,5 @@ private:
     // I/O handlers
     uint16_t io_read(uint32_t off);
     void     io_write(uint32_t off, uint32_t addr, uint16_t val);
+    void     io_write_byte(uint32_t off, uint32_t addr, uint8_t val);
 };

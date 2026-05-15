@@ -313,8 +313,7 @@ void CpuRunner::run()
             if (fast_path) {
                 while (!cpu.state.in_halt && !cpu.state.fault
                        && total_cycles < stop) {
-                    cpu.step();
-                    ++total_cycles;
+                    total_cycles += cpu.step();
                 }
             } else {
                 while (!cpu.state.in_halt && !cpu.state.fault
@@ -330,8 +329,7 @@ void CpuRunner::run()
                             "[BREAK] PC=0x%06X\n", cpu.state.pc);
                         print_reg_snapshot(cpu.state);
                     }
-                    cpu.step();
-                    ++total_cycles;
+                    total_cycles += cpu.step();
                     if (cfg.max_cycles
                             && total_cycles >= cfg.max_cycles) {
                         std::fprintf(stderr,
