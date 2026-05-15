@@ -32,7 +32,8 @@ TESTS    := test_basic.elf \
             test_branches.elf \
             test_multiply.elf \
             test_div.elf \
-            test_misc.elf
+            test_misc.elf \
+            test_softfloat_add.elf
 
 all: $(TESTS)
 
@@ -43,7 +44,7 @@ all: $(TESTS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 %.elf: $(CRT_OBJS) %.o
-	$(LD) $(LDFLAGS) -o $@ $^
+	$(LD) $(LDFLAGS) -o $@ $^ $(SYSROOT)/lib/libclang_rt.builtins-s1c33.a
 
 run: $(TESTS)
 	@pass=0; fail=0; \
