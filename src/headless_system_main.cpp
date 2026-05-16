@@ -386,11 +386,15 @@ int main(int argc, char** argv)
             }
         };
 
-        // Clock-change reset: keep timer wake fresh; pacing anchors not
-        // needed because we don't pace.
+        // Clock-change reset: keep timer wake fresh, and rescale the bus
+        // clock divisor (external memory cost is BCU-cycle based, so a
+        // 48 MHz CPU needs 2 CPU cycles per BCU cycle).  Pacing anchors
+        // not needed because we don't pace.
         periph->clk.on_clock_change = [&](uint32_t new_hz) {
             std::fprintf(stderr, "[CLK] CPU clock: %u MHz\n",
                          new_hz / 1'000'000);
+            bus->set_bus_clock_div(
+                static_cast<int>(new_hz / Bus::PIECE_BCLK_HZ));
             update_timer_wake();
         };
 

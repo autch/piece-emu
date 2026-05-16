@@ -86,7 +86,7 @@ uint8_t Bus::read8(uint32_t addr) {
     case Region::IRAM:
         return iram_[addr & (IRAM_SIZE - 1)];
     case Region::SRAM:
-        cycles += sram_wait + 1;
+        cycles += ext_read_cycles(sram_wait);
         if (addr - SRAM_BASE >= sram_.size()) return 0xFF; // open-bus beyond installed SRAM
         {
             uint8_t v = sram_[addr - SRAM_BASE];
@@ -94,7 +94,7 @@ uint8_t Bus::read8(uint32_t addr) {
             return v;
         }
     case Region::FLASH:
-        cycles += flash_wait + 1;
+        cycles += ext_read_cycles(flash_wait);
         return flash_device_->read8(addr - FLASH_BASE);
     case Region::IO: {
         uint32_t norm = normalize_io(addr);
@@ -124,7 +124,7 @@ uint16_t Bus::read16(uint32_t addr) {
     {
         uint32_t off = addr - SRAM_BASE;
         if (off < SRAM_WINDOW) [[likely]] {
-            cycles += sram_wait + 1;
+            cycles += ext_read_cycles(sram_wait);
             if (off >= sram_.size()) return 0xFFFF; // open-bus beyond installed SRAM
             uint16_t v = le16(&sram_[off]);
             if (!watchpoints_.empty()) fire_wp(addr, v, 2, false);
@@ -136,7 +136,7 @@ uint16_t Bus::read16(uint32_t addr) {
     // for busy-wait loops (pdwait).  Detecting this here avoids classify() entirely.
     if (addr >= FLASH_BASE) {
         if (addr < FLASH_BASE + flash_device_->size()) {
-            cycles += flash_wait + 1;
+            cycles += ext_read_cycles(flash_wait);
             // Fast path: in Normal command mode, read raw memory directly.
             // (CFI / Software-ID modes are rare; pay the virtual call only there.)
             if (flash_device_->in_read_mode()) {
@@ -152,14 +152,14 @@ uint16_t Bus::read16(uint32_t addr) {
         return le16(&iram_[addr & (IRAM_SIZE - 1)]);
     case Region::SRAM:
         // Already handled by fast path 1 above; unreachable in practice.
-        cycles += sram_wait + 1;
+        cycles += ext_read_cycles(sram_wait);
         if (addr - SRAM_BASE >= sram_.size()) return 0xFFFF;
         { uint16_t v = le16(&sram_[addr - SRAM_BASE]);
           if (!watchpoints_.empty()) fire_wp(addr, v, 2, false);
           return v; }
     case Region::FLASH:
         // Already handled by fast path 2 above; unreachable in practice.
-        cycles += flash_wait + 1;
+        cycles += ext_read_cycles(flash_wait);
         return flash_device_->read16(addr - FLASH_BASE);
     case Region::IO: {
         uint32_t idx = (normalize_io(addr) - IOREG_BASE) / 2;
@@ -184,7 +184,7 @@ uint32_t Bus::read32(uint32_t addr) {
     case Region::IRAM:
         return le32(&iram_[addr & (IRAM_SIZE - 1)]);
     case Region::SRAM:
-        cycles += (sram_wait + 1) * 2;
+        cycles += ext_read_cycles(sram_wait) * 2;
         if (addr - SRAM_BASE >= sram_.size()) return 0xFFFF'FFFF; // open-bus
         {
             uint32_t v = le32(&sram_[addr - SRAM_BASE]);
@@ -192,7 +192,7 @@ uint32_t Bus::read32(uint32_t addr) {
             return v;
         }
     case Region::FLASH:
-        cycles += (flash_wait + 1) * 2;
+        cycles += ext_read_cycles(flash_wait) * 2;
         // Word reads from flash bypass the device's command-state machine —
         // any kernel that needs CFI / Software-ID reads them as halfwords.
         if (flash_device_->in_read_mode()) {
@@ -224,7 +224,7 @@ void Bus::write8(uint32_t addr, uint8_t val) {
         iram_[addr & (IRAM_SIZE - 1)] = val;
         return;
     case Region::SRAM:
-        cycles += sram_wait + 2;
+        cycles += ext_write_cycles(sram_wait);
         if (addr - SRAM_BASE < sram_.size()) {
             if (!watchpoints_.empty()) {
                 fire_wp(addr, val, 1, true);
@@ -234,7 +234,7 @@ void Bus::write8(uint32_t addr, uint8_t val) {
         }
         return;
     case Region::FLASH:
-        cycles += flash_wait + 2;
+        cycles += ext_write_cycles(flash_wait);
         // The SST39VF chip is wired x16; the kernel always writes halfwords
         // when driving the command state machine.  A stray byte write here
         // is forwarded as a halfword with the byte replicated; this matches
@@ -280,7 +280,7 @@ void Bus::write16(uint32_t addr, uint16_t val) {
         put_le16(&iram_[addr & (IRAM_SIZE - 1)], val);
         return;
     case Region::SRAM:
-        cycles += sram_wait + 2;
+        cycles += ext_write_cycles(sram_wait);
         if (addr - SRAM_BASE < sram_.size()) {
             if (!watchpoints_.empty()) {
                 fire_wp(addr, val, 2, true);
@@ -290,7 +290,7 @@ void Bus::write16(uint32_t addr, uint16_t val) {
         }
         return;
     case Region::FLASH:
-        cycles += flash_wait + 2;
+        cycles += ext_write_cycles(flash_wait);
         flash_device_->write16(addr - FLASH_BASE, val);
         return;
     case Region::IO: {
@@ -317,7 +317,7 @@ void Bus::write32(uint32_t addr, uint32_t val) {
         put_le32(&iram_[addr & (IRAM_SIZE - 1)], val);
         return;
     case Region::SRAM:
-        cycles += (sram_wait + 2) * 2;
+        cycles += ext_write_cycles(sram_wait) * 2;
         if (addr - SRAM_BASE < sram_.size()) {
             if (!watchpoints_.empty()) {
                 fire_wp(addr, val, 4, true);
@@ -329,7 +329,7 @@ void Bus::write32(uint32_t addr, uint32_t val) {
     case Region::FLASH:
         // Two halfword writes — the SST chip is x16.  Each can drive an
         // independent step of the command state machine.
-        cycles += (flash_wait + 2) * 2;
+        cycles += ext_write_cycles(flash_wait) * 2;
         flash_device_->write16(addr     - FLASH_BASE, static_cast<uint16_t>(val));
         flash_device_->write16(addr + 2 - FLASH_BASE, static_cast<uint16_t>(val >> 16));
         return;
@@ -353,7 +353,7 @@ uint16_t Bus::fetch16(uint32_t addr) {
     // the next code-flash access), so bypassing the virtual call here is
     // safe and removes a per-instruction indirect branch.
     if (addr >= FLASH_BASE && addr < FLASH_BASE + flash_device_->size()) {
-        cycles += flash_wait + 1;
+        cycles += ext_read_cycles(flash_wait);
         return le16(flash_device_->mem_ptr() + (addr - FLASH_BASE));
     }
     // Internal RAM (startup trampolines, kernel ISRs, fast-path benchmark
@@ -368,7 +368,7 @@ uint16_t Bus::fetch16(uint32_t addr) {
     }
     // SRAM (most P/ECE app code lives here after kernel loads the .pex)
     if (addr >= SRAM_BASE && addr < SRAM_BASE + SRAM_WINDOW) {
-        cycles += sram_wait + 1;
+        cycles += ext_read_cycles(sram_wait);
         uint32_t off = addr - SRAM_BASE;
         if (off < sram_.size()) return le16(&sram_[off]);
         return 0xFFFF; // open-bus beyond installed SRAM (BCU still applies wait)

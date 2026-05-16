@@ -109,8 +109,49 @@ public:
     // External area wait cycles (default: 2 for SRAM, 2 for Flash —
     // matches the P/ECE kernel's 24 MHz BCU programming.  BCU register
     // writes from the kernel will overwrite these at boot.)
+    //
+    // These are RAW BCU register values, counted in BCU_CLK (BCLK) cycles.
+    // The CPU-cycle cost of an access depends on bus_clock_div below.
     int sram_wait  = 2;
     int flash_wait = 2;
+
+    // P/ECE external bus clock — rated for ~24 MHz, independent of CPU.
+    // Frontends divide cpu_clock_hz / PIECE_BCLK_HZ to get bus_clock_div.
+    static constexpr uint32_t PIECE_BCLK_HZ = 24'000'000;
+
+    // External-memory cycle-cost: (wait + 1) BCU cycles per read, (wait + 2)
+    // per write.  On P/ECE the BCU clock is independent of the CPU clock
+    // (P/ECE's external bus is rated for ~24 MHz peak BCLK regardless of
+    // whether the CPU is at 24 MHz or in 48 MHz "turbo" mode), so when the
+    // CPU runs faster than BCLK each BCU cycle costs more than one CPU cycle.
+    //
+    // bus_clock_div is the integer ratio CPU_CLK / BCLK, clamped to >= 1:
+    //   CPU @ 24 MHz  → 1  (one BCU cycle = one CPU cycle)
+    //   CPU @ 48 MHz  → 2  (one BCU cycle = two CPU cycles)
+    //   CPU @ < 24 MHz → 1 (when CPU is slower than BCLK we don't go
+    //                       sub-cycle; the external access still takes a
+    //                       full BCU cycle of real time, which the slow CPU
+    //                       can fit in fewer of its own cycles)
+    //
+    // Frontends (or peripheral_clkctl) update bus_clock_div on every CPU
+    // clock change via set_bus_clock_div().  Default 1 matches the 24 MHz
+    // boot state and unit-test expectations.
+    int bus_clock_div = 1;
+
+    void set_bus_clock_div(int div) {
+        bus_clock_div = (div < 1) ? 1 : div;
+    }
+
+    // External-memory cycle-cost helpers.  Inlined so the bus hot paths
+    // see a single integer multiply with a near-constant operand.
+    //   read:   (wait + 1) BCU cycles  × bus_clock_div
+    //   write:  (wait + 2) BCU cycles  × bus_clock_div
+    int ext_read_cycles(int wait) const {
+        return (wait + 1) * bus_clock_div;
+    }
+    int ext_write_cycles(int wait) const {
+        return (wait + 2) * bus_clock_div;
+    }
 
     // Cycle counter (incremented by each access)
     uint32_t cycles = 0;
@@ -166,9 +207,9 @@ public:
     void write32(uint32_t addr, uint32_t val);
 
     // ---- Instruction fetch (internal RAM + SRAM + Flash; charges cycles) ----
-    // IRAM fetch  → cycles += 1            (0-wait + 1 base exec cycle)
-    // SRAM fetch  → cycles += sram_wait+1  (wait state + 1 base)
-    // Flash fetch → cycles += flash_wait+1 (wait state + 1 base)
+    // IRAM fetch  → cycles += 1                          (0-wait + 1 base exec cycle)
+    // SRAM fetch  → cycles += ext_read_cycles(sram_wait)  (BCU-clock cost; ×2 in x2 mode)
+    // Flash fetch → cycles += ext_read_cycles(flash_wait)
     // Unknown region → cycles += 1, returns 0xFFFF
     uint16_t fetch16(uint32_t addr);
 

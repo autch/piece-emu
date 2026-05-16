@@ -11,6 +11,11 @@ protected:
     BcuFixture() : bus(0x80000 /* 512 KB flash */) {
         bus.sram_wait  = 3;
         bus.flash_wait = 3;
+        // These tests exercise the raw 1:1 BCU semantics (wait register
+        // value → CPU cycles).  The Bus default bus_clock_div = 1 already
+        // gives that, but pin it explicitly to keep the tests independent
+        // of any future change to the default.
+        bus.set_bus_clock_div(1);
     }
 };
 

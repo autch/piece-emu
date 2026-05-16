@@ -87,14 +87,17 @@ void CpuRunner::run()
         update_timer_wake();
     };
 
-    // On CPU clock change: reset pace reference, render interval, and
-    // timer wake point (clock change affects all timer frequencies).
+    // On CPU clock change: reset pace reference, render interval, timer
+    // wake point (clock change affects all timer frequencies), and the
+    // bus-clock divisor (so external memory access cost scales with the
+    // CPU:BCLK ratio — P/ECE BCLK is rated at ~24 MHz independent of CPU).
     periph.clk.on_clock_change = [&](uint32_t new_hz) {
         std::fprintf(stderr, "[CLK] CPU clock: %u MHz\n",
                      new_hz / 1'000'000);
         pace_last_cycle = total_cycles;
         pace_last_ns    = SDL_GetTicksNS();
         next_render     = total_cycles + new_hz / 60;
+        bus.set_bus_clock_div(static_cast<int>(new_hz / Bus::PIECE_BCLK_HZ));
         update_timer_wake();
     };
 

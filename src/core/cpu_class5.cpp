@@ -207,8 +207,10 @@ void Cpu::h_mac(Cpu& cpu, uint16_t insn) {
             off1 += 2;
             off2 += 2;
         }
-        // Commit pointer registers and cycle cost.
-        bus.cycles += static_cast<uint32_t>((bus.sram_wait + 1) * 2 * count);
+        // Commit pointer registers and cycle cost.  Each MAC iteration does
+        // two halfword reads from SRAM; the x2 speed mode multiplier is
+        // applied via ext_read_cycles().
+        bus.cycles += static_cast<uint32_t>(bus.ext_read_cycles(bus.sram_wait) * 2 * count);
         cpu.state.r[r1_n] = Bus::SRAM_BASE + off1;
         cpu.state.r[r2_n] = Bus::SRAM_BASE + off2;
         cpu.state.r[rs_n] = 0;
