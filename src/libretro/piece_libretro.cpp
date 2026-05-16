@@ -259,6 +259,21 @@ RETRO_API bool retro_load_game(const struct retro_game_info* game)
     // retro_run() converts and emits the frame.
     g_periph->hsdma.on_ch0_complete = []() { g_frame_pending = true; };
 
+    // On CPU clock change: refresh the per-frame cycle budget so the next
+    // retro_run() sees the new clock immediately.  We deliberately do NOT
+    // propagate the CPU:BCLK ratio to bus.bus_clock_div here — under the
+    // single-threaded libretro model the frontend pulls fixed-rate audio
+    // every frame and we don't have piece-emu-system's audio-clock pacing
+    // to absorb a slow CPU.  Charging the physically-correct 2× external
+    // memory cost in 48 MHz turbo mode would starve the sound subsystem
+    // (BlackWings underrun); we leave bus_clock_div = 1 so external memory
+    // cycles match the pre-bus_clock_div behaviour and the game in turbo
+    // mode keeps running at the "slightly fast" speed that the SDL
+    // frontend used to ship.
+    g_periph->clk.on_clock_change = [](uint32_t new_hz) {
+        g_cached_cpu_hz = new_hz;
+    };
+
     g_bus->install_flash_device(
         std::make_unique<Sst39vf>(Sst39vf::for_min_bytes(flash_size)));
 
