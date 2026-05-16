@@ -18,51 +18,47 @@ void Cpu::h_sub_sp_imm10(Cpu& cpu, uint16_t insn) {
 // Handlers — Class 4B: immediate shifts/rotates
 // ============================================================================
 
+// Shift / rotate flag mask per S1C33000 manual: "----↔↔" — only Z and N
+// change.  C, V, MO, DS are preserved.  This matters for sequences like
+//   scan1 r14, r10     ; sets C
+//   sll   r10, r14     ; must NOT clobber C
+//   jrult.d -2         ; reads C set by scan1
+// (clippce/framflt1 __addsf3 normalize loop relies on this).
 void Cpu::h_srl_rd_imm4(Cpu& cpu, uint16_t insn) {
     Insn i{insn};
     cpu.flush_ext();
     int n = i.shift_amt();
     uint32_t v = cpu.state.r[i.rd()];
-    bool carry = n > 0 ? (v >> (n-1)) & 1 : false;
-    cpu.state.r[i.rd()] = v >> n;
-    cpu.state.psr.set_nz(v >> n);
-    if (n > 0) cpu.state.psr.set_c(carry);
+    uint32_t r = v >> n;
+    cpu.state.r[i.rd()] = r;
+    cpu.state.psr.set_nz(r);
 }
 void Cpu::h_sll_rd_imm4(Cpu& cpu, uint16_t insn) {
     Insn i{insn};
     cpu.flush_ext();
     int n = i.shift_amt();
     uint32_t v = cpu.state.r[i.rd()];
-    bool carry = n > 0 ? (v >> (32 - n)) & 1 : false;
-    cpu.state.r[i.rd()] = v << n;
-    cpu.state.psr.set_nz(v << n);
-    if (n > 0) cpu.state.psr.set_c(carry);
+    uint32_t r = v << n;
+    cpu.state.r[i.rd()] = r;
+    cpu.state.psr.set_nz(r);
 }
 void Cpu::h_sra_rd_imm4(Cpu& cpu, uint16_t insn) {
     Insn i{insn};
     cpu.flush_ext();
     int n = i.shift_amt();
     int32_t v = static_cast<int32_t>(cpu.state.r[i.rd()]);
-    bool carry = n > 0 ? (static_cast<uint32_t>(v) >> (n-1)) & 1 : false;
     int32_t r = v >> n;
     cpu.state.r[i.rd()] = static_cast<uint32_t>(r);
     cpu.state.psr.set_nz(static_cast<uint32_t>(r));
-    if (n > 0) cpu.state.psr.set_c(carry);
 }
 void Cpu::h_sla_rd_imm4(Cpu& cpu, uint16_t insn) {
     Insn i{insn};
     cpu.flush_ext();
     int n = i.shift_amt();
     uint32_t v = cpu.state.r[i.rd()];
-    bool carry = n > 0 ? (v >> (32 - n)) & 1 : false;
     uint32_t r = v << n;
     cpu.state.r[i.rd()] = r;
     cpu.state.psr.set_nz(r);
-    if (n > 0) {
-        cpu.state.psr.set_c(carry);
-        // V = 1 if sign bit changed (arithmetic overflow)
-        cpu.state.psr.set_v((v >> 31) != (r >> 31));
-    }
 }
 void Cpu::h_rr_rd_imm4(Cpu& cpu, uint16_t insn) {
     Insn i{insn};
@@ -70,10 +66,8 @@ void Cpu::h_rr_rd_imm4(Cpu& cpu, uint16_t insn) {
     int n = i.shift_amt();
     uint32_t v = cpu.state.r[i.rd()];
     uint32_t r = std::rotr(v, n);
-    bool carry = (v >> (n - 1)) & 1;
     cpu.state.r[i.rd()] = r;
     cpu.state.psr.set_nz(r);
-    cpu.state.psr.set_c(carry);
 }
 void Cpu::h_rl_rd_imm4(Cpu& cpu, uint16_t insn) {
     Insn i{insn};
@@ -81,56 +75,47 @@ void Cpu::h_rl_rd_imm4(Cpu& cpu, uint16_t insn) {
     int n = i.shift_amt();
     uint32_t v = cpu.state.r[i.rd()];
     uint32_t r = std::rotl(v, n);
-    bool carry = (v >> (32 - n)) & 1;
     cpu.state.r[i.rd()] = r;
     cpu.state.psr.set_nz(r);
-    cpu.state.psr.set_c(carry);
 }
 
 // ============================================================================
 // Handlers — Class 4C: register shifts/rotates
 // ============================================================================
 
+// Register-form shift / rotate.  Same flag rule as imm4 form: only Z and N
+// change; C, V, MO, DS preserved (see comment on h_srl_rd_imm4 above).
 void Cpu::h_srl_rd_rs(Cpu& cpu, uint16_t insn) {
     Insn i{insn};
     cpu.flush_ext();
     int n = cpu.state.r[i.rs()] & 0x1F;
-    uint32_t v = cpu.state.r[i.rd()];
-    bool carry = n > 0 ? (v >> (n-1)) & 1 : false;
-    cpu.state.r[i.rd()] = v >> n;
-    cpu.state.psr.set_nz(v >> n);
-    if (n > 0) cpu.state.psr.set_c(carry);
+    uint32_t r = cpu.state.r[i.rd()] >> n;
+    cpu.state.r[i.rd()] = r;
+    cpu.state.psr.set_nz(r);
 }
 void Cpu::h_sll_rd_rs(Cpu& cpu, uint16_t insn) {
     Insn i{insn};
     cpu.flush_ext();
     int n = cpu.state.r[i.rs()] & 0x1F;
-    uint32_t v = cpu.state.r[i.rd()];
-    bool carry = n > 0 ? (v >> (32 - n)) & 1 : false;
-    cpu.state.r[i.rd()] = v << n;
-    cpu.state.psr.set_nz(v << n);
-    if (n > 0) cpu.state.psr.set_c(carry);
+    uint32_t r = cpu.state.r[i.rd()] << n;
+    cpu.state.r[i.rd()] = r;
+    cpu.state.psr.set_nz(r);
 }
 void Cpu::h_sra_rd_rs(Cpu& cpu, uint16_t insn) {
     Insn i{insn};
     cpu.flush_ext();
     int n = cpu.state.r[i.rs()] & 0x1F;
-    int32_t v = static_cast<int32_t>(cpu.state.r[i.rd()]);
-    bool carry = n > 0 ? (static_cast<uint32_t>(v) >> (n-1)) & 1 : false;
-    int32_t r = v >> n;
+    int32_t r = static_cast<int32_t>(cpu.state.r[i.rd()]) >> n;
     cpu.state.r[i.rd()] = static_cast<uint32_t>(r);
     cpu.state.psr.set_nz(static_cast<uint32_t>(r));
-    if (n > 0) cpu.state.psr.set_c(carry);
 }
 void Cpu::h_sla_rd_rs(Cpu& cpu, uint16_t insn) {
     Insn i{insn};
     cpu.flush_ext();
     int n = cpu.state.r[i.rs()] & 0x1F;
-    uint32_t v = cpu.state.r[i.rd()];
-    bool carry = n > 0 ? (v >> (32 - n)) & 1 : false;
-    cpu.state.r[i.rd()] = v << n;
-    cpu.state.psr.set_nz(v << n);
-    if (n > 0) cpu.state.psr.set_c(carry);
+    uint32_t r = cpu.state.r[i.rd()] << n;
+    cpu.state.r[i.rd()] = r;
+    cpu.state.psr.set_nz(r);
 }
 void Cpu::h_rr_rd_rs(Cpu& cpu, uint16_t insn) {
     Insn i{insn};
@@ -138,10 +123,8 @@ void Cpu::h_rr_rd_rs(Cpu& cpu, uint16_t insn) {
     int n = cpu.state.r[i.rs()] & 0x1F;
     uint32_t v = cpu.state.r[i.rd()];
     uint32_t r = n ? std::rotr(v, n) : v;
-    bool carry = n ? (v >> (n - 1)) & 1 : false;
     cpu.state.r[i.rd()] = r;
     cpu.state.psr.set_nz(r);
-    if (n) cpu.state.psr.set_c(carry);
 }
 void Cpu::h_rl_rd_rs(Cpu& cpu, uint16_t insn) {
     Insn i{insn};
@@ -149,10 +132,8 @@ void Cpu::h_rl_rd_rs(Cpu& cpu, uint16_t insn) {
     int n = cpu.state.r[i.rs()] & 0x1F;
     uint32_t v = cpu.state.r[i.rd()];
     uint32_t r = n ? std::rotl(v, n) : v;
-    bool carry = n ? (v >> (32 - n)) & 1 : false;
     cpu.state.r[i.rd()] = r;
     cpu.state.psr.set_nz(r);
-    if (n) cpu.state.psr.set_c(carry);
 }
 
 // ============================================================================

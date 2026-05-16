@@ -255,6 +255,56 @@ def emit_shift_reg(buf: list[str], op: ShiftOp) -> int:
     return n
 
 
+def emit_shift_preserves_cv(buf: list[str], op: ShiftOp) -> int:
+    """Verify shift / rotate does NOT modify C or V (manual mask "----↔↔").
+    Regression for clippce/framflt1 __addsf3 normalize loop, where
+        scan1 r14, r10    ; sets C
+        sll   r10, r14    ; MUST preserve C
+        jrult.d -2        ; reads C from scan1, not sll
+    relies on shifts not clobbering C.  Pre-sets C=1 and V=1 via a direct
+    PSR write (ld.w %psr, %rs), runs the shift, then verifies the bits
+    are still set and N/Z reflect the shift result."""
+    n = 0
+    form_idx = 2
+    cases = [
+        (0x12345678, 1),
+        (0x80000000, 4),
+        (0xDEADBEEF, 8),
+        (0x00FFFFFF, 7),
+    ]
+    for vi, (rs, sh) in enumerate(cases):
+        cid = case_id(op.op_idx, form_idx, vi)
+        result = op.func(rs, sh)
+        flags = nz_flags(result)
+        # Read PSR, OR in C|V (bits 3 and 2), write PSR back, then run
+        # the shift, then read PSR.
+        asm = _asm_block(
+            "ld.w %2, %%psr",
+            "or %2, 12",                 # set C (bit 3) and V (bit 2)
+            "ld.w %%psr, %2",
+            f"{op.name} %0, {sh}",
+            "ld.w %1, %%psr",
+        )
+        buf.append(f"""static int case_{cid}(void) {{
+    uint32_t rd = (uint32_t){rs:#010x}u;
+    uint32_t psr;
+    uint32_t scratch;
+    asm volatile(
+        {asm}
+        : "+r"(rd), "=r"(psr), "=&r"(scratch)
+        :
+    );
+    CHECK({cid}, rd == {result:#010x}u);
+    CHECK({cid}, (psr & {PSR_C:#x}) == {PSR_C:#x});
+    CHECK({cid}, (psr & {PSR_V:#x}) == {PSR_V:#x});
+    CHECK({cid}, (psr & {PSR_N | PSR_Z:#x}) == {flags:#x});
+    return 0;
+}}
+""")
+        n += 1
+    return n
+
+
 def emit_misc(buf: list[str], op: MiscOp) -> int:
     """Misc ops take `op %rd, %rs` (rd = output, rs = input)."""
     n = 0
@@ -311,6 +361,7 @@ def main() -> int:
     for op in SHIFT_OPS:
         emit_shift_imm(cases, op)
         emit_shift_reg(cases, op)
+        emit_shift_preserves_cv(cases, op)
     for op in MISC_OPS:
         emit_misc(cases, op)
 
