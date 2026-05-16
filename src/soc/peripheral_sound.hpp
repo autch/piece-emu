@@ -134,6 +134,16 @@ private:
 
     bool     pending_        = false;
     uint64_t complete_cycle_ = 0;
+    // Scheduled time of the most recently fired Ch1 completion IRQ.
+    // Used to anchor the NEXT IRQ when the kernel rearms Ch1 from within
+    // its ISR: real hardware's PWM output runs at a fixed cadence
+    // independent of when the channel is rearmed, so the next IRQ should
+    // fire `delta` cycles after the PREVIOUS IRQ — not `delta` cycles
+    // after the rearm.  Anchoring to the rearm time adds the ISR cost
+    // into each Ch1 period, dropping the sample-production rate below
+    // SAMPLE_RATE and starving the audio output (visible as buffer
+    // underrun under libretro's fixed-cycle-budget frame model).
+    uint64_t last_irq_cycle_  = 0;
 
     // --audio-trace
     bool                       trace_     = false;

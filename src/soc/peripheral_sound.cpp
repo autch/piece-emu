@@ -13,6 +13,7 @@ void Sound::reset()
     // Drain pending IRQ schedule.
     pending_        = false;
     complete_cycle_ = 0;
+    last_irq_cycle_ = 0;
     irq_count_      = 0;
 
     // Ring buffer: advance tail to head so consumer sees empty; avoids
@@ -84,13 +85,25 @@ void Sound::handle_ch1_start(uint32_t sadr, uint32_t cnt)
     uint64_t delta = static_cast<uint64_t>(cnt)
                    * static_cast<uint64_t>(clk_hz)
                    / static_cast<uint64_t>(SAMPLE_RATE);
-    uint64_t now = now_cyc;
-    complete_cycle_ = now + delta;
+    // Anchor IRQ scheduling to the previous IRQ when the kernel is in the
+    // steady "continuation" pattern (rearming Ch1 from inside the previous
+    // IRQ's ISR, before one delta has elapsed since the last IRQ fired).
+    // On real hardware the PWM output continues at a fixed clock rate
+    // regardless of when the channel is rearmed; modelling the IRQ
+    // schedule the same way avoids accumulating ISR latency into each
+    // Ch1 period and produces SAMPLE_RATE samples per emulated second.
+    uint64_t base = now_cyc;
+    if (last_irq_cycle_ != 0
+        && now_cyc >= last_irq_cycle_
+        && (now_cyc - last_irq_cycle_) < delta) {
+        base = last_irq_cycle_;
+    }
+    complete_cycle_ = base + delta;
     pending_        = true;
 
     if (trace_ && irq_count_ < 8) {
         std::fprintf(stderr, "[SND] ch1_start sadr=0x%08x cnt=%u now=%llu done=%llu\n",
-            sadr, cnt, (unsigned long long)now, (unsigned long long)complete_cycle_);
+            sadr, cnt, (unsigned long long)now_cyc, (unsigned long long)complete_cycle_);
     }
 
     if (on_push) {
@@ -104,7 +117,8 @@ void Sound::tick(uint64_t cycles)
     if (!pending_)            return;
     if (cycles < complete_cycle_) return;
 
-    pending_ = false;
+    pending_         = false;
+    last_irq_cycle_  = complete_cycle_;
     if (hsdma_) hsdma_->finish_ch1();
     if (intc_)  intc_->raise(InterruptController::IrqSource::HSDMA1, 1);
 
