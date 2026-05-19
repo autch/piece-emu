@@ -1,14 +1,20 @@
-# piece_libretro — libretro core (.so) for piece-emu.
+# piece_libretro — libretro core for piece-emu.
+#
+# Native builds produce a SHARED library (.so / .dll / .dylib) loaded by
+# RetroArch at runtime.  Emscripten builds produce a STATIC archive (.a)
+# that RetroArch Web links into its single retroarch.wasm; -fPIC and
+# visibility=hidden are irrelevant in that mode, and SHARED is not how
+# RetroArch's web port consumes cores.
 #
 # Source files from src/core, src/soc, src/board, src/debug, src/system are
-# duplicate-compiled here with -fPIC.  We deliberately do NOT reuse the
-# existing piece_core / piece_soc / piece_board STATIC targets, because
-# flipping POSITION_INDEPENDENT_CODE on those would propagate -fPIC to every
-# other consumer (piece-emu, piece-emu-system, gtest binaries) for no
-# benefit.  Duplicate-compile is justified for libretro: the .so is the
+# duplicate-compiled here with -fPIC (native only).  We deliberately do NOT
+# reuse the existing piece_core / piece_soc / piece_board STATIC targets,
+# because flipping POSITION_INDEPENDENT_CODE on those would propagate -fPIC
+# to every other consumer (piece-emu, piece-emu-system, gtest binaries) for
+# no benefit.  Duplicate-compile is justified for libretro: the .so is the
 # only consumer that needs PIC and the build cost is small.
 
-add_library(piece_libretro SHARED
+set(PIECE_LIBRETRO_SOURCES
     # libretro entry points (this directory)
     piece_libretro.cpp
 
@@ -50,6 +56,28 @@ add_library(piece_libretro SHARED
     ${CMAKE_SOURCE_DIR}/system/piece_peripherals.cpp
 )
 
+if(EMSCRIPTEN)
+    add_library(piece_libretro STATIC ${PIECE_LIBRETRO_SOURCES})
+    # Static archive: -fPIC and visibility hiding don't apply.  RetroArch
+    # Web's build system pulls this archive into retroarch.wasm via
+    # STATIC_LIBS.  Modern emcc generates wasm-object archives but the .bc
+    # extension is the long-standing RetroArch convention for emscripten
+    # core artifacts, so downstream Makefile rules pattern-match on it.
+    set_target_properties(piece_libretro PROPERTIES
+        PREFIX ""                       # output: piece_libretro.a (no "lib")
+        OUTPUT_NAME piece_libretro
+    )
+else()
+    add_library(piece_libretro SHARED ${PIECE_LIBRETRO_SOURCES})
+    set_target_properties(piece_libretro PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        PREFIX ""                       # output: piece_libretro.so (no "lib")
+        OUTPUT_NAME piece_libretro
+        CXX_VISIBILITY_PRESET hidden     # only retro_* symbols exported
+        C_VISIBILITY_PRESET   hidden
+    )
+endif()
+
 target_include_directories(piece_libretro PRIVATE
     ${CMAKE_SOURCE_DIR}/core
     ${CMAKE_SOURCE_DIR}/soc
@@ -61,15 +89,7 @@ target_include_directories(piece_libretro PRIVATE
 
 target_link_libraries(piece_libretro PRIVATE piece_pfi_format)
 
-set_target_properties(piece_libretro PROPERTIES
-    POSITION_INDEPENDENT_CODE ON
-    PREFIX ""                           # output: piece_libretro.so (no "lib")
-    OUTPUT_NAME piece_libretro
-    CXX_VISIBILITY_PRESET hidden         # only retro_* symbols exported
-    C_VISIBILITY_PRESET   hidden
-)
-
-# Copy piece_libretro.info next to the .so/.dll so the build directory is
+# Copy piece_libretro.info next to the .so/.dll/.a so the build directory is
 # directly drop-in for testing.  RetroArch reads this file from its info/
 # directory at runtime; users still need to install it there separately for
 # menu UI integration ("Load Content" file picker filtering).

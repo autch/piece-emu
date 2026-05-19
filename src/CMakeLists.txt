@@ -43,11 +43,25 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# Dependencies via vcpkg (toolchain injected by -DCMAKE_TOOLCHAIN_FILE=...)
+# Build profile: native (full set of frontends + tests) vs Emscripten
+# (libretro core only — RetroArch Web links it statically).
 # ---------------------------------------------------------------------------
-find_package(GTest QUIET)
-find_package(CLI11 CONFIG REQUIRED)
-find_package(SDL3 CONFIG)   # optional; enables piece-emu-system + piece_host
+if(EMSCRIPTEN)
+    set(PIECE_NATIVE_FRONTENDS OFF)
+    message(STATUS "Emscripten build: native frontends and tests skipped (libretro core only)")
+else()
+    set(PIECE_NATIVE_FRONTENDS ON)
+endif()
+
+# ---------------------------------------------------------------------------
+# Dependencies via vcpkg (toolchain injected by -DCMAKE_TOOLCHAIN_FILE=...)
+# Skipped under Emscripten: the libretro core is vcpkg-free by design.
+# ---------------------------------------------------------------------------
+if(PIECE_NATIVE_FRONTENDS)
+    find_package(GTest QUIET)
+    find_package(CLI11 CONFIG REQUIRED)
+    find_package(SDL3 CONFIG)   # optional; enables piece-emu-system + piece_host
+endif()
 
 # ---------------------------------------------------------------------------
 # Library layers
@@ -69,9 +83,12 @@ target_include_directories(piece_pfi_format INTERFACE ${CMAKE_CURRENT_SOURCE_DIR
 add_subdirectory(core)
 add_subdirectory(soc)
 add_subdirectory(board)
-add_subdirectory(debug)
-add_subdirectory(host)
-add_subdirectory(tools)
+
+if(PIECE_NATIVE_FRONTENDS)
+    add_subdirectory(debug)
+    add_subdirectory(host)
+    add_subdirectory(tools)
+endif()
 
 # ---------------------------------------------------------------------------
 # piece_writeback — host-side PFI writeback (4 KB sector pwrite + fsync).
@@ -80,25 +97,29 @@ add_subdirectory(tools)
 # piece-emu-system link this and decide whether to enable writeback at
 # runtime via CLI.
 # ---------------------------------------------------------------------------
-add_library(piece_writeback STATIC
-    system/platform_file.cpp
-    system/pfi_writeback.cpp
-)
-target_include_directories(piece_writeback PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/system)
-target_link_libraries(piece_writeback PUBLIC piece_core)
+if(PIECE_NATIVE_FRONTENDS)
+    add_library(piece_writeback STATIC
+        system/platform_file.cpp
+        system/pfi_writeback.cpp
+    )
+    target_include_directories(piece_writeback PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/system)
+    target_link_libraries(piece_writeback PUBLIC piece_core)
+endif()
 
 # ---------------------------------------------------------------------------
 # piece-emu — bare-metal / headless CLI frontend (POSIX only, no SDL)
 # ---------------------------------------------------------------------------
-add_executable(piece-emu main.cpp)
-target_link_libraries(piece-emu PRIVATE
-    piece_debug
-    piece_board
-    piece_soc
-    piece_core
-    piece_writeback
-    CLI11::CLI11
-)
+if(PIECE_NATIVE_FRONTENDS)
+    add_executable(piece-emu main.cpp)
+    target_link_libraries(piece-emu PRIVATE
+        piece_debug
+        piece_board
+        piece_soc
+        piece_core
+        piece_writeback
+        CLI11::CLI11
+    )
+endif()
 
 # ---------------------------------------------------------------------------
 # piece-emu-headless-system — script-driven full-system frontend (no SDL).
@@ -112,26 +133,28 @@ target_link_libraries(piece-emu PRIVATE
 # piece_imageio for PNG output and the system/ peripherals aggregate +
 # named-button helper.  Does NOT link piece_host (SDL-only).
 # ---------------------------------------------------------------------------
-add_executable(piece-emu-headless-system
-    headless_system_main.cpp
-    headless_cli_config.cpp
-    system/piece_peripherals.cpp
-    system/named_button_input.cpp
-)
-target_include_directories(piece-emu-headless-system PRIVATE system)
-target_link_libraries(piece-emu-headless-system PRIVATE
-    piece_debug
-    piece_board
-    piece_soc
-    piece_core
-    piece_imageio
-    CLI11::CLI11
-)
+if(PIECE_NATIVE_FRONTENDS)
+    add_executable(piece-emu-headless-system
+        headless_system_main.cpp
+        headless_cli_config.cpp
+        system/piece_peripherals.cpp
+        system/named_button_input.cpp
+    )
+    target_include_directories(piece-emu-headless-system PRIVATE system)
+    target_link_libraries(piece-emu-headless-system PRIVATE
+        piece_debug
+        piece_board
+        piece_soc
+        piece_core
+        piece_imageio
+        CLI11::CLI11
+    )
+endif()
 
 # ---------------------------------------------------------------------------
 # Unit tests (Google Test via vcpkg)
 # ---------------------------------------------------------------------------
-if(GTest_FOUND)
+if(PIECE_NATIVE_FRONTENDS AND GTest_FOUND)
     enable_testing()
 
     # Split into two binaries along the library boundary.  Each binary lists
@@ -185,7 +208,7 @@ if(GTest_FOUND)
     gtest_discover_tests(piece_core_tests)
     gtest_discover_tests(piece_soc_tests)
     gtest_discover_tests(piece_board_tests)
-else()
+elseif(PIECE_NATIVE_FRONTENDS)
     message(WARNING "Google Test not found — skipping unit tests (piece_unit_tests). "
                     "Run cmake with -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake")
 endif()
@@ -194,7 +217,7 @@ endif()
 # piece-emu-system — full-system frontend (SDL3 display + button input)
 # Requires SDL3.  Enable by building with -DVCPKG_MANIFEST_FEATURES=system.
 # ---------------------------------------------------------------------------
-if(SDL3_FOUND)
+if(PIECE_NATIVE_FRONTENDS AND SDL3_FOUND)
     # Platform-specific joystick layout.  Set at configure time to bake in the
     # correct button-index mapping for the target device.
     # Supported values: "" (generic/gamepad only), "uconsole" (ClockworkPi uConsole).
@@ -227,7 +250,7 @@ if(SDL3_FOUND)
     endif()
 
     message(STATUS "piece-emu-system target enabled")
-else()
+elseif(PIECE_NATIVE_FRONTENDS)
     message(STATUS "SDL3 not found — piece-emu-system target skipped")
 endif()
 
