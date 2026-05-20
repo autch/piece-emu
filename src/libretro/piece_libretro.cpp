@@ -508,16 +508,34 @@ RETRO_API void retro_run(void)
     }
 
     // -------- 4) Audio drain → audio_batch_cb ---------------------------
+    // RetroArch's Emscripten frontend paces the WHOLE main loop off the
+    // audio block (the EMSCRIPTEN_AUDIO_*BLOCK build options): if the core
+    // stops feeding audio, the WebAudio buffer starves and RetroArch spins
+    // retro_run trying to refill it — pegging the host CPU at 100% while the
+    // displayed frame rate collapses to ~30 fps.  The P/ECE emits no audio
+    // at all on idle screens (system menu), so submitting "only when there
+    // are samples" starves that pacing.  Always hand the frontend a steady
+    // SAMPLE_RATE/fps stream: pop real samples, pad the shortfall with
+    // silence.  An accumulator keeps the per-frame count balanced to the
+    // exact 32000/60 = 533.33 average so the resampler sees no drift.
     if (audio_batch_cb) {
-        std::size_t got = g_periph->sound.pop(g_audio_mono, AUDIO_DRAIN);
-        if (got > 0) {
-            // mono → stereo (duplicate L=R)
-            for (std::size_t i = 0; i < got; ++i) {
-                g_audio_stereo[i * 2 + 0] = g_audio_mono[i];
-                g_audio_stereo[i * 2 + 1] = g_audio_mono[i];
-            }
-            audio_batch_cb(g_audio_stereo, got);
+        static double audio_credit = 0.0;
+        audio_credit += static_cast<double>(Sound::SAMPLE_RATE) / TARGET_FPS;
+        std::size_t want = static_cast<std::size_t>(audio_credit);
+        audio_credit -= static_cast<double>(want);
+        if (want > AUDIO_DRAIN) want = AUDIO_DRAIN;   // defensive clamp
+
+        std::size_t got = g_periph->sound.pop(g_audio_mono, want);
+        // mono → stereo (duplicate L=R); pad [got, want) with silence.
+        for (std::size_t i = 0; i < got; ++i) {
+            g_audio_stereo[i * 2 + 0] = g_audio_mono[i];
+            g_audio_stereo[i * 2 + 1] = g_audio_mono[i];
         }
+        for (std::size_t i = got; i < want; ++i) {
+            g_audio_stereo[i * 2 + 0] = 0;
+            g_audio_stereo[i * 2 + 1] = 0;
+        }
+        audio_batch_cb(g_audio_stereo, want);
     }
 }
 
