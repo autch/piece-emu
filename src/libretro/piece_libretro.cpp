@@ -421,12 +421,29 @@ RETRO_API void retro_run(void)
         g_total_cycles + static_cast<std::uint64_t>(
             static_cast<double>(g_cached_cpu_hz) / TARGET_FPS);
 
+    // Throttle do_tick() the same way CpuRunner::run() and the headless
+    // frontend do.  Without the lower-bound clamp, a high-frequency timer
+    // (audio DMA ~44 kHz ≈ 544 cycles/IRQ) makes do_tick() — intc.poll() +
+    // full peripheral tick + wake recompute — fire thousands of times per
+    // frame; callgrind showed that path at >75% of retro_run cost while the
+    // CPU itself was idle.  Clamp the next wake to [MIN_TICK_BURST,
+    // EVENT_INTERVAL] cycles: at most one tick per ~2000 cycles, and at
+    // least one per ~10000 so IO-write-induced timer reconfigs are still
+    // picked up promptly.  Each tick is then at most MIN_TICK_BURST cycles
+    // late in emulated time (~83 µs at 24 MHz — well within one audio frame).
+    constexpr std::uint64_t EVENT_INTERVAL = 10'000;
+    constexpr std::uint64_t MIN_TICK_BURST =  2'000;
+
     auto do_tick = [&]() {
         g_periph->tick(g_total_cycles);
         g_periph->intc.set_current_il(g_cpu->state.psr.il());
         g_periph->intc.poll();
         std::uint64_t w = g_periph->next_wake_cycle();
-        g_next_timer_wake = (w == UINT64_MAX) ? target : std::min(w, target);
+        std::uint64_t earliest = g_total_cycles + MIN_TICK_BURST;
+        std::uint64_t latest   = g_total_cycles + EVENT_INTERVAL;
+        g_next_timer_wake = (w == UINT64_MAX)
+                            ? latest
+                            : std::clamp(w, earliest, latest);
     };
 
     while (g_total_cycles < target && !g_cpu->state.fault) {
@@ -443,13 +460,19 @@ RETRO_API void retro_run(void)
             const bool sleep = (g_cpu->state.halt_mode == CpuState::HaltMode::Slp);
             std::uint64_t wake = sleep ? g_periph->sleep_wake_cycle()
                                        : g_periph->next_wake_cycle();
-            // Always advance to a tick point AND call do_tick — the CPU
-            // unblocks only when intc.poll() asserts a trap, and that lives
-            // inside do_tick.  Skipping do_tick on a halt event would defer
-            // IRQ delivery until the next frame's first tick (~16 ms),
-            // shifting kernel polling timing enough to break PFFS writes.
-            const std::uint64_t advance_to =
-                (wake == UINT64_MAX) ? target : std::min(wake, target);
+            // Advance emulated time to the wake point and do_tick so
+            // intc.poll() can assert the wake trap (the CPU unblocks only
+            // from inside do_tick).  Coalesce closely-spaced wakes: clamp the
+            // jump to at least MIN_TICK_BURST cycles so a burst of pending
+            // events (audio DMA ~544 cycles/IRQ) does not call do_tick()
+            // thousands of times per frame.  periph.tick() is analytical and
+            // catches up every event up to g_total_cycles, so no event is
+            // lost — only the IRQ-delivery instant moves up to MIN_TICK_BURST
+            // cycles later, the same tolerance the running path accepts.
+            const std::uint64_t raw  =
+                (wake == UINT64_MAX) ? target : wake;
+            const std::uint64_t advance_to = std::min(
+                std::max(raw, g_total_cycles + MIN_TICK_BURST), target);
             g_total_cycles = advance_to;
             do_tick();
         }
