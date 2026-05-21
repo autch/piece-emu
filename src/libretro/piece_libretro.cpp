@@ -495,16 +495,32 @@ RETRO_API void retro_run(void)
     if (video_cb)
         video_cb(g_video_pixels, FB_W, FB_H, FB_W * sizeof(uint16_t));
 
-    // -------- 3.5) Sync Sst39vf::mem_ → SAVE_RAM buffer ------------------
-    // The frontend may pull SAVE_RAM at any moment (autosave interval,
-    // close-content event, etc.) without notifying the core.  Mirror
-    // mem_ into the buffer's flash region every frame; the header bytes
-    // we wrote in retro_load_game stay untouched.  At 512 KB / 60 fps
-    // this is ~30 MB/s, negligible against typical memory bandwidth.
+    // -------- 3.5) Sync flash → SAVE_RAM buffer --------------------------
+    // RetroArch may pull SAVE_RAM at any moment without notifying the core,
+    // so g_srm_buffer must always reflect current flash contents.  The full
+    // image was already copied in retro_load_game; here we only re-copy the
+    // sectors the app has written since the previous frame.  The P/ECE
+    // writes flash only on an explicit save, so any_dirty() is false on the
+    // overwhelming majority of frames and this is a no-op — far cheaper than
+    // the former unconditional 512 KB-4 MB full-image memcpy, which the
+    // frontend's per-displayed-frame retro_run multiplier amplified further.
     if (!g_srm_buffer.empty()) {
-        std::memcpy(g_srm_buffer.data() + g_srm_header_bytes,
-                    g_bus->flash_device()->mem_ptr(),
-                    g_srm_flash_bytes);
+        FlashDevice* fd       = g_bus->flash_device();
+        const std::size_t ssz = fd->sector_size();
+        if (ssz > 0 && fd->any_dirty()) {
+            const std::uint8_t* mem = fd->mem_ptr();
+            std::uint8_t*       dst = g_srm_buffer.data() + g_srm_header_bytes;
+            fd->for_each_dirty_sector([&](std::uint32_t sector) {
+                std::size_t off = static_cast<std::size_t>(sector) * ssz;
+                if (off >= g_srm_flash_bytes)
+                    return;
+                std::memcpy(dst + off, mem + off,
+                            std::min(ssz, g_srm_flash_bytes - off));
+            });
+            fd->clear_dirty();
+        }
+        // ssz == 0 → read-only FlatFlashRom: flash never changes, so the
+        // retro_load_game copy stays valid and there is nothing to do.
     }
 
     // -------- 4) Audio drain → audio_batch_cb ---------------------------
