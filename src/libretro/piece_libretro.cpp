@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <vector>
@@ -83,9 +84,20 @@ std::uint8_t  g_lcd_pixels[FB_H][FB_W];
 constexpr uint16_t kPalette[4] = { 0xFFFF, 0xAD55, 0x52AA, 0x0000 };
 
 // ---- Core options ----------------------------------------------------------
-// Cached value of "piece_swap_ab".  Re-read whenever the frontend signals
-// a variable update (RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE).
+// Cached values.  Re-read whenever the frontend signals a variable update
+// (RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE).
 bool g_swap_ab = false;
+
+// Peripheral-tick throttle (CPU cycles).  do_tick() — which ticks every
+// running timer, polls the INTC, and recomputes the next wake point — runs
+// at most once per g_tick_burst cycles.  Larger = far less per-frame
+// overhead (a Chrome WASM profile put do_tick at ~87% of retro_run) but
+// coarser interrupt delivery; set too large it mutes audio and the emulated
+// machine drifts off real-hardware speed.  On-hardware tuning: 2000 runs
+// slightly fast, 4000 ≈ real P/ECE speed, 8000 stutters, 16000 breaks audio
+// — so 4000 is the default.  Exposed as the "piece_tick_burst" core option
+// because the sweet spot shifts with host CPU speed.
+std::uint64_t g_tick_burst = 4000;
 
 // Core option definitions (v2).  The frontend keeps pointers to these,
 // so they must outlive the core (static const is correct).
@@ -105,6 +117,30 @@ const retro_core_option_v2_definition kOptionDefs[] = {
             { nullptr, nullptr },
         },
         "off",
+    },
+    {
+        "piece_tick_burst",
+        "Timer Tick Granularity",
+        nullptr,
+        "How often emulated peripheral timers and interrupts are serviced, "
+        "in CPU cycles.  Larger values reduce per-frame overhead (raise the "
+        "frame rate) but deliver interrupts more coarsely — set too large, "
+        "audio goes silent.  4000 (default) runs at roughly real P/ECE speed "
+        "with clean audio; lower for finer timing, raise it for more headroom, "
+        "then back off if audio breaks.",
+        nullptr,
+        nullptr,
+        {
+            { "2000",  "2000 (accurate, slightly fast)" },
+            { "3000",  "3000" },
+            { "4000",  "4000 (default, ≈ real P/ECE)" },
+            { "6000",  "6000" },
+            { "8000",  "8000" },
+            { "12000", "12000" },
+            { "16000", "16000 (fast, coarse)" },
+            { nullptr, nullptr },
+        },
+        "4000",
     },
     { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, {{nullptr, nullptr}}, nullptr },
 };
@@ -129,13 +165,18 @@ const retro_input_descriptor kInputDescriptors[] = {
     { 0, 0, 0, 0, nullptr },
 };
 
-// Read "piece_swap_ab" from the frontend and cache it in g_swap_ab.
+// Re-read core options from the frontend and cache them.
 void update_core_options()
 {
     if (!environ_cb) return;
     retro_variable var = { "piece_swap_ab", nullptr };
     if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
         g_swap_ab = (std::strcmp(var.value, "on") == 0);
+    }
+    retro_variable tb = { "piece_tick_burst", nullptr };
+    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &tb) && tb.value) {
+        unsigned long v = std::strtoul(tb.value, nullptr, 10);
+        if (v >= 500) g_tick_burst = v;
     }
 }
 
@@ -421,18 +462,17 @@ RETRO_API void retro_run(void)
         g_total_cycles + static_cast<std::uint64_t>(
             static_cast<double>(g_cached_cpu_hz) / TARGET_FPS);
 
-    // Throttle do_tick() the same way CpuRunner::run() and the headless
-    // frontend do.  Without the lower-bound clamp, a high-frequency timer
-    // (audio DMA ~44 kHz ≈ 544 cycles/IRQ) makes do_tick() — intc.poll() +
-    // full peripheral tick + wake recompute — fire thousands of times per
-    // frame; callgrind showed that path at >75% of retro_run cost while the
-    // CPU itself was idle.  Clamp the next wake to [MIN_TICK_BURST,
-    // EVENT_INTERVAL] cycles: at most one tick per ~2000 cycles, and at
-    // least one per ~10000 so IO-write-induced timer reconfigs are still
-    // picked up promptly.  Each tick is then at most MIN_TICK_BURST cycles
-    // late in emulated time (~83 µs at 24 MHz — well within one audio frame).
-    constexpr std::uint64_t EVENT_INTERVAL = 10'000;
-    constexpr std::uint64_t MIN_TICK_BURST =  2'000;
+    // Throttle do_tick().  do_tick() runs intc.poll() + a full peripheral
+    // tick + a next-wake recompute; a Chrome WASM profile of the Web build
+    // put that chain at ~87% of retro_run while the CPU emulation itself
+    // (Cpu::step) was 0.3%.  do_tick() fires at most once per MIN_TICK_BURST
+    // cycles; the peripheral tick is analytical (every timer catches up to
+    // g_total_cycles in O(1)), so a coarser clamp loses NO emulated event —
+    // only the interrupt-delivery instant moves later.  MIN_TICK_BURST is
+    // the "piece_tick_burst" core option (default 4000) so the speed /
+    // interrupt-accuracy trade-off can be tuned at runtime.
+    const std::uint64_t MIN_TICK_BURST = g_tick_burst;
+    const std::uint64_t EVENT_INTERVAL = g_tick_burst * 4;
 
     auto do_tick = [&]() {
         g_periph->tick(g_total_cycles);
