@@ -406,6 +406,25 @@ ninja -C build-src
 
 ---
 
+## RetroArch Web (WebAssembly) コア / RetroArch Web (WebAssembly) Core
+
+libretro コアは Emscripten で WebAssembly にビルドし、**RetroArch Web** に静的リンクしてブラウザ上で動かせます。`src/CMakeLists.txt` は `EMSCRIPTEN` を検出するとネイティブフロントエンドとテストを除外し、`piece_libretro` を静的アーカイブ (`.a`) としてのみビルドします。
+
+```sh
+source /path/to/emsdk/emsdk_env.sh
+emcmake cmake -S src -B build-em -G Ninja
+ninja -C build-em piece_libretro
+#  → build-em/libretro/piece_libretro.a
+```
+
+The libretro core can be built to WebAssembly with Emscripten and statically linked into **RetroArch Web** to run in a browser. When `src/CMakeLists.txt` detects `EMSCRIPTEN`, it drops the native frontends and tests and builds only `piece_libretro` as a static archive (`.a`).
+
+**WASM コアを正しく動かすには RetroArch Web フロントエンド側の修正が不可欠です。** RetroArch Web 同梱の BrowserFS は新世代 Emscripten (4.x+) と非互換で、パッチを当てないとファイルシステム初期化でクラッシュします。RetroArch Web へのコア組み込み手順・`libretro_emscripten.bc` のファイル名規約・BrowserFS パッチ・性能チューニング（`piece_tick_burst` コアオプション）は **[`docs/web-port-libretro.md`](docs/web-port-libretro.md)** にまとめてあります。
+
+**Getting the WASM core to run correctly requires changes to the RetroArch Web frontend itself.** The BrowserFS bundled with RetroArch Web is incompatible with modern Emscripten (4.x+) and crashes during filesystem init without a patch. See **[`docs/web-port-libretro.md`](docs/web-port-libretro.md)** for the full procedure: embedding the core into RetroArch Web, the `libretro_emscripten.bc` filename convention, the BrowserFS patch, and performance tuning via the `piece_tick_burst` core option.
+
+---
+
 ## Emulator Memory Map
 
 ```

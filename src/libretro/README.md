@@ -74,6 +74,25 @@ When using `-L`, the core info file isn't strictly required, but installing it g
 
 ---
 
+## Web ブラウザで動かす / Running in a Web Browser
+
+このコアは Emscripten で WebAssembly にコンパイルし、**RetroArch Web** のコアとしてブラウザ上で動かせます。ネイティブの RetroArch をインストールできない環境（共用 PC、スマートフォン、リモートデスクトップ越しなど）向けの配布経路です。
+
+This core can be compiled to WebAssembly with Emscripten and run in the browser as a **RetroArch Web** core. It is a distribution path for environments where you cannot install native RetroArch (shared PCs, phones, remote-desktop sessions, ...).
+
+ビルド手順と RetroArch Web への組み込み方法は [docs/web-port-libretro.md](../../docs/web-port-libretro.md) を参照してください。同ドキュメントには、RetroArch Web 同梱の BrowserFS と新世代 Emscripten の非互換に対する必須パッチも記載されています。
+
+For the build procedure and how to embed the core into RetroArch Web, see [docs/web-port-libretro.md](../../docs/web-port-libretro.md). That document also covers a patch required for a BrowserFS / modern-Emscripten incompatibility.
+
+ブラウザ上での動作について / Notes on running in a browser:
+
+- 入力マッピング・コアオプション・セーブデータ (`.srm`) はネイティブ版と同じ挙動です。`.srm` は RetroArch Web のブラウザストレージ (IndexedDB) に保存されます。
+  Input mapping, core options, and save data (`.srm`) behave the same as the native build. The `.srm` is kept in RetroArch Web's browser storage (IndexedDB).
+- WASM 版はネイティブより遅いため、**`Timer Tick Granularity` コアオプション**で速度を調整します（下記「コアオプション」参照）。既定値 4000 はおおむね実機相当の速さです。
+  The WASM build is slower than native, so use the **Timer Tick Granularity** core option to tune speed (see "Core Options" below). The default of 4000 is roughly real-hardware speed.
+
+---
+
 ## 入力マッピング / Input Mapping
 
 | RetroArch JOYPAD | P/ECE ボタン / P/ECE button |
@@ -97,6 +116,7 @@ Labels appear under `Quick Menu → Controls → Port 1 Controls` as P/ECE-speci
 | オプション / Option | 既定値 / Default | 説明 / Description |
 |---|---|---|
 | **Swap A/B Buttons** | Off | Off: RetroArch 標準（A=P/ECE A、B=P/ECE B）。On: P/ECE 物理配置を再現（A=P/ECE B、B=P/ECE A）／Off: RetroArch standard. On: P/ECE physical layout (right face = B, left face = A). |
+| **Timer Tick Granularity** | 4000 | 周辺タイマと割り込みを処理する間隔（CPU サイクル数）。大きいほど描画は軽くなる（フレームレートが上がる）が割り込みが粗くなり、過大だと音が途切れる。主に WASM (Web) 版の速度調整用。2000=やや速い、4000=実機相当、8000 以上=粗い。／ How often emulated timers and interrupts are serviced (CPU cycles). Larger = lighter per-frame cost (higher frame rate) but coarser interrupts; too large mutes audio. Mainly for tuning the WASM (Web) build: 2000 = slightly fast, 4000 ≈ real hardware, 8000+ = coarse. |
 
 ---
 
