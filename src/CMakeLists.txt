@@ -43,12 +43,23 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# Build profile: native (full set of frontends + tests) vs Emscripten
-# (libretro core only — RetroArch Web links it statically).
+# Build profile: native (full set of frontends + tests) vs libretro-only
+# (libretro core + PFI tools only — no SDL3, CLI11, GTest dependency).
+# Emscripten implicitly forces libretro-only (RetroArch Web links it
+# statically; SDL3/CLI11/GTest are unavailable there anyway).
 # ---------------------------------------------------------------------------
-if(EMSCRIPTEN)
+option(PIECE_LIBRETRO_ONLY
+    "Build only the libretro core and PFI tools (no SDL3/CLI11/GTest dependency)"
+    OFF)
+
+if(EMSCRIPTEN OR PIECE_LIBRETRO_ONLY)
     set(PIECE_NATIVE_FRONTENDS OFF)
-    message(STATUS "Emscripten build: native frontends and tests skipped (libretro core only)")
+    if(EMSCRIPTEN)
+        message(STATUS "Emscripten build: native frontends and tests skipped (libretro core only)")
+    else()
+        message(STATUS "PIECE_LIBRETRO_ONLY=ON: native frontends and tests skipped "
+                       "(libretro core + tools only)")
+    endif()
 else()
     set(PIECE_NATIVE_FRONTENDS ON)
 endif()
@@ -84,10 +95,16 @@ add_subdirectory(core)
 add_subdirectory(soc)
 add_subdirectory(board)
 
+# tools/ (mkpfi / pfar / ripper) is C-only and only optionally needs libusb.
+# It has no SDL3 / CLI11 / GTest dependency, so it builds in libretro-only mode
+# too.  Skipped under Emscripten (host-side command-line tools).
+if(NOT EMSCRIPTEN)
+    add_subdirectory(tools)
+endif()
+
 if(PIECE_NATIVE_FRONTENDS)
     add_subdirectory(debug)
     add_subdirectory(host)
-    add_subdirectory(tools)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -255,8 +272,9 @@ elseif(PIECE_NATIVE_FRONTENDS)
 endif()
 
 # ---------------------------------------------------------------------------
-# piece_libretro — libretro core (.so) frontend
-# Vcpkg / SDL3 / GTest 非依存。デフォルト ON、PIECE_NO_LIBRETRO=ON で無効化。
+# piece_libretro — libretro core (.so) frontend.
+# Independent of vcpkg / SDL3 / GTest.  Built by default; pass
+# -DPIECE_NO_LIBRETRO=ON to disable.
 # ---------------------------------------------------------------------------
 option(PIECE_NO_LIBRETRO "Disable libretro core build" OFF)
 
