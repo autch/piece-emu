@@ -8,7 +8,9 @@
 BARE     := $(abspath ..)
 C33HOME  := /home/autch/src/llvm-c33
 BIN      := $(C33HOME)/build/bin
-SYSROOT  := $(C33HOME)/sysroot/s1c33-none-elf
+# Shared with the s1c33-none-piece toolchain (the only sysroot tools/crt
+# generates); --target=s1c33-none-elf still selects bare-metal codegen.
+SYSROOT  := $(C33HOME)/sysroot/s1c33-none-piece
 
 CC       := $(BIN)/clang --target=s1c33-none-elf --sysroot=$(SYSROOT)
 LD       := $(BIN)/ld.lld

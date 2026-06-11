@@ -203,7 +203,7 @@ Results: 9 passed, 0 failed
 C33HOME=/home/autch/src/llvm-c33
 CC=$C33HOME/build/bin/clang
 LD=$C33HOME/build/bin/ld.lld
-SYSROOT=$C33HOME/sysroot/s1c33-none-elf
+SYSROOT=$C33HOME/sysroot/s1c33-none-piece
 
 # コンパイル
 $CC --target=s1c33-none-elf --sysroot=$SYSROOT \

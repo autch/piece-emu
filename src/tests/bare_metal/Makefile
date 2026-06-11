@@ -10,7 +10,10 @@
 
 C33HOME  := /home/autch/src/llvm-c33
 BIN      := $(C33HOME)/build/bin
-SYSROOT  := $(C33HOME)/sysroot/s1c33-none-elf
+# The sysroot is shared with the s1c33-none-piece toolchain (the only one
+# tools/crt generates); --target=s1c33-none-elf still selects bare-metal
+# codegen (no P/ECE runtime, r8-abs off).
+SYSROOT  := $(C33HOME)/sysroot/s1c33-none-piece
 
 CC       := $(BIN)/clang --target=s1c33-none-elf --sysroot=$(SYSROOT)
 AS       := $(BIN)/clang --target=s1c33-none-elf --sysroot=$(SYSROOT)
