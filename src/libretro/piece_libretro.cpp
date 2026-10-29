@@ -226,7 +226,7 @@ RETRO_API void retro_get_system_info(struct retro_system_info* info)
 {
     std::memset(info, 0, sizeof(*info));
     info->library_name     = "piece-emu";
-    info->library_version  = "0.1";
+    info->library_version  = "0.3";
     info->valid_extensions = "pfi";
     info->need_fullpath    = false;     // give us the data blob via game->data
     info->block_extract    = false;
