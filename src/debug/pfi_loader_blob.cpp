@@ -2,7 +2,7 @@
 #include "bus.hpp"
 #include <cstdio>
 #include <cstring>
-#include <format>
+#include "strfmt.hpp"
 #include <stdexcept>
 
 // Memory-blob counterpart of pfi_loader.cpp.  Used by the libretro core
@@ -23,7 +23,7 @@ static void read_pfi_header_blob(const std::uint8_t* data, std::size_t len,
     if (!data)
         throw std::runtime_error("pfi_blob: null data pointer");
     if (len < sizeof(PFIHEADER))
-        throw std::runtime_error(std::format(
+        throw std::runtime_error(piece::format(
             "pfi_blob: blob too short to read header ({} < {})",
             len, sizeof(PFIHEADER)));
 
@@ -32,16 +32,16 @@ static void read_pfi_header_blob(const std::uint8_t* data, std::size_t len,
 
     if ((hdr.signature & 0xffffff00u) !=
         ((uint32_t)'P' << 24 | (uint32_t)'F' << 16 | (uint32_t)'I' << 8))
-        throw std::runtime_error(std::format(
+        throw std::runtime_error(piece::format(
             "pfi_blob: invalid PFI signature (got 0x{:08X})", hdr.signature));
 
     if (hdr.offset < sizeof(PFIHEADER))
-        throw std::runtime_error(std::format(
+        throw std::runtime_error(piece::format(
             "pfi_blob: offset_to_flash ({}) < sizeof(PFIHEADER) ({})",
             hdr.offset, sizeof(PFIHEADER)));
 
     if (hdr.sysinfo.size != SYSINFO_EXPECTED_SIZE)
-        throw std::runtime_error(std::format(
+        throw std::runtime_error(piece::format(
             "pfi_blob: SYSTEMINFO.size mismatch (expected {}, got {})",
             SYSINFO_EXPECTED_SIZE, hdr.sysinfo.size));
 
@@ -62,13 +62,13 @@ PfiInfo pfi_load_blob(Bus& bus, const std::uint8_t* data, std::size_t len)
 
     static constexpr uint32_t FLASH_BASE = Bus::FLASH_BASE;
     if (hdr.sysinfo.pffs_end <= FLASH_BASE)
-        throw std::runtime_error(std::format(
+        throw std::runtime_error(piece::format(
             "pfi_load_blob: SYSTEMINFO.pffs_end (0x{:X}) <= FLASH_BASE (0x{:X})",
             hdr.sysinfo.pffs_end, FLASH_BASE));
     uint32_t flash_size = hdr.sysinfo.pffs_end - FLASH_BASE;
 
     if (hdr.offset > len)
-        throw std::runtime_error(std::format(
+        throw std::runtime_error(piece::format(
             "pfi_load_blob: flash offset ({}) past blob end ({})",
             hdr.offset, len));
 

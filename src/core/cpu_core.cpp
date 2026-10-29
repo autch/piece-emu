@@ -1,6 +1,6 @@
 #include "cpu_impl.hpp"
 #include "bus.hpp"
-#include <format>
+#include "strfmt.hpp"
 #include <cstdio>
 #include <string>
 
@@ -71,10 +71,10 @@ void Cpu::h_undef(Cpu& cpu, uint16_t insn) {
     std::string detail;
     int nexts = cpu.state.pending_ext_count;
     if (nexts >= 2)
-        detail += std::format("  {}\n", cpu.disasm(fault_pc - 4));
+        detail += piece::format("  {}\n", cpu.disasm(fault_pc - 4));
     if (nexts >= 1)
-        detail += std::format("  {}\n", cpu.disasm(fault_pc - 2));
-    detail += std::format("  0x{:06X}: {:04X}  <undef>", fault_pc, insn);
+        detail += piece::format("  {}\n", cpu.disasm(fault_pc - 2));
+    detail += piece::format("  0x{:06X}: {:04X}  <undef>", fault_pc, insn);
 
     cpu.diag_fault("undef", fault_pc, std::move(detail));
 }
@@ -146,13 +146,13 @@ static std::string format_reg_dump(const CpuState& s, uint32_t fault_pc) {
     std::string out;
     out += "Registers:\n";
     for (int i = 0; i < 16; i += 4) {
-        out += std::format("  R{:2d}={:08X}  R{:2d}={:08X}  R{:2d}={:08X}  R{:2d}={:08X}\n",
+        out += piece::format("  R{:2d}={:08X}  R{:2d}={:08X}  R{:2d}={:08X}  R{:2d}={:08X}\n",
                            i,   s.r[i],
                            i+1, s.r[i+1],
                            i+2, s.r[i+2],
                            i+3, s.r[i+3]);
     }
-    out += std::format("   PC={:08X}   SP={:08X}  PSR={:08X}\n"
+    out += piece::format("   PC={:08X}   SP={:08X}  PSR={:08X}\n"
                        "  ALR={:08X}  AHR={:08X}\n",
                        fault_pc, s.sp, s.psr.raw, s.alr, s.ahr);
     return out;
@@ -350,12 +350,12 @@ int Cpu::step() {
         // placed inside the delay slot (EXT is D="-", always a hard fault).
         if (state.pending_ext_count > 0) {
             diag_fault("delay_slot_ext", insn_pc,
-                std::format("EXT prefix applied inside delay slot at 0x{:06X}", insn_pc));
+                piece::format("EXT prefix applied inside delay slot at 0x{:06X}", insn_pc));
             return cycles_consumed();
         }
         DelayClass dsc = delay_slot_class(insn);
         if (dsc != DC_OK) {
-            std::string detail = std::format("delay slot at 0x{:06X}: {}", insn_pc, disasm(insn_pc));
+            std::string detail = piece::format("delay slot at 0x{:06X}: {}", insn_pc, disasm(insn_pc));
             if (dsc == DC_HARD) {
                 diag_fault("delay_slot_hard", insn_pc,
                     detail + " (multi-cycle, memory access, or branch — forbidden)");
@@ -378,7 +378,7 @@ int Cpu::step() {
             if (writes_sp) {
                 static const char* caller_name[] = { "", "ret.d", "call.d" };
                 diag_warn("delay_slot_sp_clobber", insn_pc,
-                    std::format("{} in delay slot of {} at 0x{:06X}: "
+                    piece::format("{} in delay slot of {} at 0x{:06X}: "
                                 "SP already adjusted by branch — stack will be corrupted",
                                 disasm(insn_pc), caller_name[state.delay_caller], insn_pc));
             }
@@ -390,7 +390,7 @@ int Cpu::step() {
     // ------------------------------------------------------------------
     if (state.pending_ext_count > 0 && !ext_capable(insn)) {
         diag_warn_or_fault("ext_incompat", insn_pc,
-            std::format("EXT prefix before {} at 0x{:06X}: instruction does not support EXT",
+            piece::format("EXT prefix before {} at 0x{:06X}: instruction does not support EXT",
                         disasm(insn_pc), insn_pc));
         if (state.in_halt) return cycles_consumed();
         // Non-strict: continue; the handler will call flush_ext() to discard
@@ -406,7 +406,7 @@ int Cpu::step() {
     // ------------------------------------------------------------------
     if (bus_.take_fault() && !state.fault) {
         diag_fault("bus_fault", insn_pc,
-                   std::format("bus fault during instruction at 0x{:06X}", insn_pc));
+                   piece::format("bus fault during instruction at 0x{:06X}", insn_pc));
     }
 
     // ------------------------------------------------------------------

@@ -184,6 +184,13 @@ to a single instruction / operand combo.
 - LLVM backend regalloc could pick R0 (callee-saved) as return-value staging
   across `popn`, clobbering the returned value. Fixed in the S1C33 backend.
 
+## libretro buildbot constraints
+
+`.gitlab-ci.yml` (repo root) builds the libretro core on the libretro buildbot (git.libretro.com) via `libretro-infrastructure/ci-templates` CMake templates (`CORENAME=piece`, `CMAKE_SOURCE_ROOT=src`, `EXTRA_PATH=libretro`, `-DPIECE_LIBRETRO_ONLY=ON`). The Linux image is **Ubuntu xenial + gcc-9**, macOS targets 10.15, iOS 13, and Android uses the NDK's libc++. Consequences for every source file compiled into `piece_libretro` (see `PIECE_LIBRETRO_SOURCES` in `src/libretro/CMakeLists.txt`):
+- **Do not use `std::format` / `<format>`** (libstdc++ gained it in gcc-13). Use `piece::format` from `src/core/strfmt.hpp`: it is `std::format` where available and a small `{}` / `{:06X}` / `{:2d}`-style fallback otherwise (always the fallback on Apple). Native-only code (GDB stub, frontends) may keep `std::format`.
+- Stick to C++20 features gcc-9 supports (no `std::span`, concepts, ranges, `<numbers>`, etc.). Verify with an `ubuntu:20.04` (gcc-9) container: `cmake -DPIECE_LIBRETRO_ONLY=ON src -B b && cmake --build b --target piece_libretro`.
+- The emscripten template passes `-DLIBRETRO_STATIC=ON -DLIBRETRO_SUFFIX=_emscripten` and expects `piece_libretro_emscripten.bc`; `src/libretro/CMakeLists.txt` honours both.
+
 ## Language Rules
 
 - Code, comments in top-level, `src/` and commit messages: **English only**.

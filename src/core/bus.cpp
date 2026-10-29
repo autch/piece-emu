@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <cstring>
 #include <cstdio>
-#include <format>
+#include "strfmt.hpp"
 #include <stdexcept>
 
 // ---- helpers ----------------------------------------------------------------
@@ -55,7 +55,7 @@ void Bus::register_io(uint32_t addr, IoHandler handler) {
     // Handlers are halfword-granular; register at the even (aligned) address.
     // Byte accesses to the odd address are handled automatically by read8/write8.
     if (addr < IOREG_BASE || addr >= IOREG_BASE + IOHANDLER_SPAN || (addr & 1))
-        throw std::runtime_error(std::format(
+        throw std::runtime_error(piece::format(
             "invalid IO register address 0x{:06X} (must be even, in 0x{:06X}–0x{:06X})",
             addr, IOREG_BASE, IOREG_BASE + IOHANDLER_SPAN - 2));
     io_handlers_[(addr - IOREG_BASE) / 2] = std::move(handler);
@@ -115,7 +115,7 @@ uint16_t Bus::read16(uint32_t addr) {
     addr &= 0x0FFF'FFFF;
     if (addr & 1) {
         diag_->report({DiagLevel::Fault, "misalign_read16", 0,
-            std::format("misaligned halfword read at 0x{:06X}", addr), ""});
+            piece::format("misaligned halfword read at 0x{:06X}", addr), ""});
         fault_pending_ = true;
         addr &= ~1u;
     }
@@ -176,7 +176,7 @@ uint32_t Bus::read32(uint32_t addr) {
     addr &= 0x0FFF'FFFF;
     if (addr & 3) {
         diag_->report({DiagLevel::Fault, "misalign_read32", 0,
-            std::format("misaligned word read at 0x{:06X}", addr), ""});
+            piece::format("misaligned word read at 0x{:06X}", addr), ""});
         fault_pending_ = true;
         addr &= ~3u;
     }
@@ -271,7 +271,7 @@ void Bus::write16(uint32_t addr, uint16_t val) {
     addr &= 0x0FFF'FFFF;
     if (addr & 1) {
         diag_->report({DiagLevel::Fault, "misalign_write16", 0,
-            std::format("misaligned halfword write at 0x{:06X}", addr), ""});
+            piece::format("misaligned halfword write at 0x{:06X}", addr), ""});
         fault_pending_ = true;
         addr &= ~1u;
     }
@@ -308,7 +308,7 @@ void Bus::write32(uint32_t addr, uint32_t val) {
     addr &= 0x0FFF'FFFF;
     if (addr & 3) {
         diag_->report({DiagLevel::Fault, "misalign_write32", 0,
-            std::format("misaligned word write at 0x{:06X}", addr), ""});
+            piece::format("misaligned word write at 0x{:06X}", addr), ""});
         fault_pending_ = true;
         addr &= ~3u;
     }

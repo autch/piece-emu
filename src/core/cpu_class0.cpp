@@ -1,6 +1,6 @@
 #include "cpu_impl.hpp"
 #include "bus.hpp"
-#include <format>
+#include "strfmt.hpp"
 
 // ============================================================================
 // Helper: handle delay slot for class 0 branches
@@ -112,7 +112,7 @@ void Cpu::h_jp_rb(Cpu& cpu, uint16_t insn) {
     // the delay slot on certain memory transactions.  Refuse to execute it.
     if (delayed) {
         cpu.diag_fault("jp_d_rb", fault_pc,
-            std::format("jp.d %r{} at 0x{:06X}: forbidden (hardware DMA bug, use jp %%r{})",
+            piece::format("jp.d %r{} at 0x{:06X}: forbidden (hardware DMA bug, use jp %%r{})",
                         rb_n, fault_pc, rb_n));
         return;
     }
