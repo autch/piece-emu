@@ -39,6 +39,7 @@ CMake 側で行っている分岐(詳細は [src/CMakeLists.txt](../src/CMakeLis
 - `add_subdirectory(debug/host/tools)` をネイティブ時のみ
 - `piece_writeback` / `piece-emu` / `piece-emu-headless-system` / `piece-emu-system` / GTest テスト群もネイティブ時のみ
 - `piece_libretro` は Emscripten 時 `STATIC`(`.a`)、ネイティブ時 `SHARED`(`.so` / `.dll` / `.dylib`)
+- libretro buildbot 規約の `-DLIBRETRO_STATIC=ON -DLIBRETRO_SUFFIX=_emscripten` を渡すと、成果物は `build-em/libretro/piece_libretro_emscripten.bc` になる(buildbot の `emscripten-static-cmake.yml` テンプレートが期待する名前。リポジトリ直下の `.gitlab-ci.yml` 参照)。手動で RetroArch Web に組み込む場合も、この `.bc` をそのまま `libretro_emscripten.bc` としてコピーすればよい
 
 `vcpkg` ツールチェーンファイルは Emscripten ビルドでは指定しない(`emcmake` が Emscripten のツールチェーンを注入する)。
 

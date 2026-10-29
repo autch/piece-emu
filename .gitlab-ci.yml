@@ -1,0 +1,168 @@
+# DESCRIPTION: GitLab CI/CD for libRetro (NOT FOR GitLab-proper)
+#
+# Consumed by the libretro buildbot at git.libretro.com, which builds the
+# piece_libretro core for the RetroArch online core downloader.  It uses the
+# shared job templates from libretro-infrastructure/ci-templates and has no
+# effect on GitHub.
+#
+# The CMake project lives under src/ and the core is emitted into
+# <build>/libretro/, hence CMAKE_SOURCE_ROOT and EXTRA_PATH below.
+# PIECE_LIBRETRO_ONLY skips the SDL3 / CLI11 / GTest frontends so that no
+# vcpkg dependency is needed on the build images.
+
+##############################################################################
+################################# BOILERPLATE ################################
+##############################################################################
+
+# Core definitions
+.core-defs:
+  variables:
+    CORENAME: piece
+    CMAKE_SOURCE_ROOT: src
+    EXTRA_PATH: libretro
+    CORE_ARGS: -DPIECE_LIBRETRO_ONLY=ON
+
+# Inclusion templates, required for the build to work
+include:
+  ################################## DESKTOPS ################################
+  # Linux
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/linux-cmake.yml'
+
+  # Windows (MinGW cross)
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/windows-cmake-mingw.yml'
+
+  # macOS x86_64
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/osx-cmake-x86.yml'
+
+  # macOS arm64
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/osx-cmake-arm64.yml'
+
+  ################################## CELLULAR ################################
+  # Android
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/android-cmake.yml'
+
+  # iOS
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/ios-cmake.yml'
+
+  # tvOS
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/tvos-cmake.yml'
+
+  ################################## CONSOLES ################################
+  # (none)
+
+  #################################### MISC ##################################
+  # Emscripten (RetroArch Web)
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/emscripten-static-cmake.yml'
+
+# Stages for building
+stages:
+  - build-prepare
+  - build-shared
+  - build-static
+
+##############################################################################
+#################################### STAGES ##################################
+##############################################################################
+#
+################################### DESKTOPS #################################
+# Linux 64-bit
+libretro-build-linux-x64:
+  extends:
+    - .libretro-linux-cmake-x86_64
+    - .core-defs
+
+# Linux 32-bit
+libretro-build-linux-i686:
+  extends:
+    - .libretro-linux-cmake-x86
+    - .core-defs
+
+# Linux AArch64
+libretro-build-linux-aarch64:
+  extends:
+    - .libretro-linux-cmake-aarch64
+    - .core-defs
+
+# Windows 64-bit
+libretro-build-windows-x64:
+  extends:
+    - .libretro-windows-cmake-x86_64
+    - .core-defs
+
+# Windows 32-bit
+libretro-build-windows-i686:
+  extends:
+    - .libretro-windows-cmake-x86
+    - .core-defs
+
+# macOS 64-bit
+libretro-build-osx-x64:
+  extends:
+    - .libretro-osx-cmake-x86_64
+    - .core-defs
+  variables:
+    # The template defaults to 10.9; C++20 library features (aligned new,
+    # std::optional's exception type, ...) need 10.15 in Apple's libc++.
+    MACOSX_DEPLOYMENT_TARGET: "10.15"
+
+# macOS ARM 64-bit
+libretro-build-osx-arm64:
+  extends:
+    - .libretro-osx-cmake-arm64
+    - .core-defs
+
+################################### CELLULAR #################################
+# Android ARMv7a
+android-armeabi-v7a:
+  extends:
+    - .libretro-android-cmake-armeabi-v7a
+    - .core-defs
+
+# Android ARMv8a
+android-arm64-v8a:
+  extends:
+    - .libretro-android-cmake-arm64-v8a
+    - .core-defs
+
+# Android 64-bit x86
+android-x86_64:
+  extends:
+    - .libretro-android-cmake-x86_64
+    - .core-defs
+
+# Android 32-bit x86
+android-x86:
+  extends:
+    - .libretro-android-cmake-x86
+    - .core-defs
+
+# iOS
+libretro-build-ios-arm64:
+  extends:
+    - .libretro-ios-cmake-arm64
+    - .core-defs
+  variables:
+    # The template defaults to iOS 8.0, which predates the C++17/20 library
+    # support in Apple's libc++.
+    IOS_MINVER: "13.0"
+
+# tvOS
+libretro-build-tvos-arm64:
+  extends:
+    - .libretro-tvos-cmake-arm64
+    - .core-defs
+
+#################################### MISC ####################################
+# Emscripten
+libretro-build-emscripten:
+  extends:
+    - .libretro-emscripten-static-cmake-retroarch-master
+    - .core-defs

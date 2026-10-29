@@ -56,26 +56,46 @@ set(PIECE_LIBRETRO_SOURCES
     ${CMAKE_SOURCE_DIR}/system/piece_peripherals.cpp
 )
 
-if(EMSCRIPTEN)
+# libretro buildbot conventions (libretro-infrastructure/ci-templates):
+#   LIBRETRO_STATIC  — build a static archive (static-only platforms such as
+#                      Emscripten); passed as -DLIBRETRO_STATIC=ON.
+#   LIBRETRO_SUFFIX  — platform suffix appended to the output name, e.g.
+#                      "_emscripten" -> piece_libretro_emscripten.bc.
+option(LIBRETRO_STATIC "Build the libretro core as a static archive" OFF)
+set(LIBRETRO_SUFFIX "" CACHE STRING "Suffix appended to the libretro core file name")
+
+if(EMSCRIPTEN OR LIBRETRO_STATIC)
     add_library(piece_libretro STATIC ${PIECE_LIBRETRO_SOURCES})
     # Static archive: -fPIC and visibility hiding don't apply.  RetroArch
     # Web's build system pulls this archive into retroarch.wasm via
-    # STATIC_LIBS.  Modern emcc generates wasm-object archives but the .bc
-    # extension is the long-standing RetroArch convention for emscripten
-    # core artifacts, so downstream Makefile rules pattern-match on it.
+    # STATIC_LIBS.
     set_target_properties(piece_libretro PROPERTIES
         PREFIX ""                       # output: piece_libretro.a (no "lib")
-        OUTPUT_NAME piece_libretro
+        OUTPUT_NAME piece_libretro${LIBRETRO_SUFFIX}
     )
+    if(EMSCRIPTEN AND LIBRETRO_STATIC)
+        # The buildbot picks up <core>_libretro_emscripten.bc.  Modern emcc
+        # generates wasm-object archives, but .bc is the long-standing
+        # RetroArch naming convention for Emscripten core artifacts.  A plain
+        # `emcmake cmake` build (no LIBRETRO_STATIC) keeps the .a name.
+        set_target_properties(piece_libretro PROPERTIES SUFFIX ".bc")
+    endif()
 else()
     add_library(piece_libretro SHARED ${PIECE_LIBRETRO_SOURCES})
     set_target_properties(piece_libretro PROPERTIES
         POSITION_INDEPENDENT_CODE ON
         PREFIX ""                       # output: piece_libretro.so (no "lib")
-        OUTPUT_NAME piece_libretro
+        OUTPUT_NAME piece_libretro${LIBRETRO_SUFFIX}
         CXX_VISIBILITY_PRESET hidden     # only retro_* symbols exported
         C_VISIBILITY_PRESET   hidden
     )
+endif()
+
+# MinGW: do not make RetroArch users ship libgcc_s / libstdc++ DLLs next to
+# the core.  (The buildbot's MXE ".static" toolchain already links them
+# statically; this keeps distro mingw-w64 builds equally self-contained.)
+if(MINGW AND NOT LIBRETRO_STATIC)
+    target_link_options(piece_libretro PRIVATE -static-libgcc -static-libstdc++)
 endif()
 
 target_include_directories(piece_libretro PRIVATE
